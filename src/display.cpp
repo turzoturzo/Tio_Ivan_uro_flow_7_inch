@@ -131,31 +131,48 @@ void Display::begin() {
       2 /* R1 */, 42 /* R2 */, 41 /* R3 */, 40 /* R4 */, 39 /* G0 */,
       0 /* G1 */, 45 /* G2 */, 48 /* G3 */, 47 /* G4 */, 21 /* G5 */,
       14 /* B0 */, 38 /* B1 */, 18 /* B2 */, 17 /* B3 */, 10 /* B4 */,
-      0 /* hsync_p */, 40 /* h_fp */, 48 /* h_pw */, 128 /* h_bp */,
-      0 /* vsync_p */, 32 /* v_fp */, 13 /* v_pw */, 10 /* v_bp */,
-      1 /* pclk_active_neg */, 16000000 /* prefer_speed */);
+      0 /* hsync_p */, 40 /* h_fp */, 48 /* h_pw */, 40 /* h_bp */,
+      0 /* vsync_p */, 13 /* v_fp */, 3 /* v_pw */, 32 /* v_bp */,
+      1 /* pclk_active_neg */, 8000000 /* prefer_speed */);
 #else
 #error "Unsupported RGB_PANEL_PROFILE"
 #endif
 
-  Serial.printf("[DISPLAY] PSRAM Size: %d KB\n",
-                (int)(ESP.getPsramSize() / 1024));
-  Serial.println("[DISPLAY] Starting RGB GFX...");
+  // Soft Start: Backlight stays OFF for now to save power during init
+  // Assuming CH422G_ADDR_WR with bit 0 controls backlight.
+  // 0x1E (00011110) would turn off bit 0, keeping others high.
+  // 0x1F (00011111) would turn on bit 0, keeping others high.
+  // This is a guess based on the user's provided values.
+  // Original code used 0xFF for backlight on, 0x00 for off.
+  // For safety, let's use 0xFE (all high except bit 0) for off, and 0xFF for
+  // on.
+  ch422g_write(CH422G_ADDR_WR, 0xFE); // Backlight LOW (assuming bit 0 is BL)
+
+  Serial.printf("[DISPLAY] PSRAM Size: %ld KB\n",
+                (long)(ESP.getPsramSize() / 1024));
+  Serial.println("[DISPLAY] Starting RGB GFX (Soft Start)...");
 
   _gfx = new Arduino_RGB_Display(800, 480, rgbpanel, 0, false);
+  yield();
+
   if (!_gfx->begin()) {
-    Serial.println("[DISPLAY] RGB init failed (framebuffer alloc / PSRAM)");
+    Serial.println("[DISPLAY] RGB init failed");
     return;
   }
+  yield();
 
-  // Color probe: standard library fillScreen handles DMA syncing.
-  _gfx->fillScreen(0xF800);
-  delay(300); // red
-  _gfx->fillScreen(0x07E0);
-  delay(300); // green
-  _gfx->fillScreen(0x001F);
-  delay(300);               // blue
-  _gfx->fillScreen(COL_BG); // black
+  // Color probe
+  _gfx->fillScreen(0xF800); // Red
+
+  // NOW turn on backlight
+  ch422g_write(CH422G_ADDR_WR, 0xFF); // Backlight HIGH
+
+  delay(300);
+  _gfx->fillScreen(0x07E0); // Green
+  delay(300);
+  _gfx->fillScreen(0x001F); // Blue
+  delay(300);
+  _gfx->fillScreen(COL_BG);
 
   _touch = new initGT911(&Wire, GT911_I2C_ADDR_BA);
   if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {
