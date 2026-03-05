@@ -2,8 +2,8 @@
 #include "config.h"
 #include "main.h" // AppState enum
 #include <Arduino.h>
-#include <Arduino_RGB_Display.h>
-#include <databus/Arduino_DataBus.h>
+#include <Arduino_DataBus.h>
+#include <display/Arduino_RGB_Display.h>
 #include <initGT911.h>
 
 // ── Colour palette
@@ -54,7 +54,7 @@ Display::Display()
 }
 
 void Display::begin() {
-  Arduino_DataBus *bus = new Arduino_ESP32RGBPanel(
+  Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
       RGB_DE, RGB_VSYNC, RGB_HSYNC, RGB_PCLK, RGB_R0, RGB_R1, RGB_R2, RGB_R3,
       RGB_R4, RGB_G0, RGB_G1, RGB_G2, RGB_G3, RGB_G4, RGB_G5, RGB_B0, RGB_B1,
       RGB_B2, RGB_B3, RGB_B4, 0 /* hsync_polarity */,
@@ -64,7 +64,7 @@ void Display::begin() {
       10 /* vsync_back_porch */, 1 /* pclk_active_neg */,
       16000000 /* prefer_speed */);
 
-  _gfx = new Arduino_RGB_Display(800, 480, bus);
+  _gfx = new Arduino_RGB_Display(800, 480, rgbpanel);
   _gfx->begin();
   _gfx->fillScreen(COL_BG);
 
@@ -509,7 +509,7 @@ void Display::_drawSessionScreen(bool firstFrame, float weight_g,
   _gfx->print(elStr);
 
   // ── Chart area (black background) ────────────────────────────────────────
-  _gfx->fillRect(CHART_X, CHART_Y, CHART_W, CHART_H, TFT_BLACK);
+  _gfx->fillRect(CHART_X, CHART_Y, CHART_W, CHART_H, COL_BG);
 
   if (chartCount >= 2) {
     // Find max values for axis scaling

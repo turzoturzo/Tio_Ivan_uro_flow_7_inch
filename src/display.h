@@ -1,6 +1,7 @@
 #include "chart_types.h"
+#include <Arduino.h>
+#include <Arduino_DataBus.h>
 #include <Arduino_GFX.h>
-#include <databus/Arduino_DataBus.h>
 #include <databus/Arduino_ESP32RGBPanel.h>
 #include <display/Arduino_RGB_Display.h>
 // AppState defined in main.h — forward-declare to avoid circular include
