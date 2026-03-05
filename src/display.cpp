@@ -54,7 +54,23 @@ Display::Display()
 }
 
 void Display::begin() {
-  Arduino_ESP32RGBPanel *rgbpanel = new Arduino_ESP32RGBPanel(
+  Arduino_ESP32RGBPanel *rgbpanel = nullptr;
+
+#if RGB_PANEL_PROFILE == 0
+  Serial.println("[DISPLAY] RGB profile 0: Waveshare-style");
+  rgbpanel = new Arduino_ESP32RGBPanel(
+      41 /* DE */, 42 /* VSYNC */, 46 /* HSYNC */, 40 /* PCLK */,
+      45 /* R0 */, 48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */,
+      13 /* G0 */, 12 /* G1 */, 11 /* G2 */, 10 /* G3 */, 9 /* G4 */,
+      3 /* G5 */, 8 /* B0 */, 16 /* B1 */, 15 /* B2 */, 7 /* B3 */,
+      6 /* B4 */, 0 /* hsync_polarity */, 40 /* hsync_front_porch */,
+      10 /* hsync_pulse_width */, 10 /* hsync_back_porch */,
+      0 /* vsync_polarity */, 40 /* vsync_front_porch */,
+      10 /* vsync_pulse_width */, 10 /* vsync_back_porch */,
+      1 /* pclk_active_neg */, 16000000 /* prefer_speed */);
+#elif RGB_PANEL_PROFILE == 1
+  Serial.println("[DISPLAY] RGB profile 1: ESP32_8048S070");
+  rgbpanel = new Arduino_ESP32RGBPanel(
       RGB_DE, RGB_VSYNC, RGB_HSYNC, RGB_PCLK, RGB_R0, RGB_R1, RGB_R2, RGB_R3,
       RGB_R4, RGB_G0, RGB_G1, RGB_G2, RGB_G3, RGB_G4, RGB_G5, RGB_B0, RGB_B1,
       RGB_B2, RGB_B3, RGB_B4, 0 /* hsync_polarity */,
@@ -62,6 +78,21 @@ void Display::begin() {
       16 /* hsync_back_porch */, 0 /* vsync_polarity */,
       12 /* vsync_front_porch */, 13 /* vsync_pulse_width */,
       10 /* vsync_back_porch */, 1 /* pclk_active_neg */);
+#elif RGB_PANEL_PROFILE == 2
+  Serial.println("[DISPLAY] RGB profile 2: ST7262-800x480");
+  rgbpanel = new Arduino_ESP32RGBPanel(
+      40 /* DE */, 41 /* VSYNC */, 39 /* HSYNC */, 42 /* PCLK */,
+      45 /* R0 */, 48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */,
+      5 /* G0 */, 6 /* G1 */, 7 /* G2 */, 15 /* G3 */, 16 /* G4 */,
+      4 /* G5 */, 8 /* B0 */, 3 /* B1 */, 46 /* B2 */, 9 /* B3 */,
+      1 /* B4 */, 0 /* hsync_polarity */, 8 /* hsync_front_porch */,
+      4 /* hsync_pulse_width */, 8 /* hsync_back_porch */,
+      0 /* vsync_polarity */, 8 /* vsync_front_porch */,
+      4 /* vsync_pulse_width */, 8 /* vsync_back_porch */,
+      1 /* pclk_active_neg */, 16000000 /* prefer_speed */);
+#else
+#error "Unsupported RGB_PANEL_PROFILE"
+#endif
 
   _gfx = new Arduino_RGB_Display(800, 480, rgbpanel);
   if (!_gfx->begin()) {
@@ -72,6 +103,15 @@ void Display::begin() {
 
   pinMode(TFT_BL_PIN, OUTPUT);
   digitalWrite(TFT_BL_PIN, HIGH);
+
+  // Quick visual probe to confirm panel writes before normal UI starts.
+  _gfx->fillScreen(0xF800);
+  delay(60);
+  _gfx->fillScreen(0x07E0);
+  delay(60);
+  _gfx->fillScreen(0x001F);
+  delay(60);
+  _gfx->fillScreen(COL_BG);
 
   _touch = new initGT911(&Wire, GT911_I2C_ADDR_BA);
   if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {

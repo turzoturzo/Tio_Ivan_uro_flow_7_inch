@@ -48,7 +48,13 @@
 #define TOUCH_RST_PIN 38 // GT911 RST
 #define TFT_BL_PIN 2     // RGB LCD backlight
 
-// RGB Panel pins for ESP32_8048S070 / Waveshare ESP32-S3-Touch-LCD-7
+// RGB panel profile selector:
+// 0 = Waveshare-style 7" profile (original project mapping)
+// 1 = ESP32_8048S070 profile
+// 2 = ST7262 800x480 profile from Arduino_GFX examples
+#define RGB_PANEL_PROFILE 0
+
+// Default RGB pin map (used by profile 1 if you keep these macros)
 #define RGB_DE 41
 #define RGB_VSYNC 40
 #define RGB_HSYNC 39
