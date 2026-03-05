@@ -42,17 +42,17 @@
   5000UL // ms — sustained below threshold → end session
 
 // ─── Hardware pins ───────────────────────────────────────────────────────────
-#define TOUCH_SDA_PIN 19 // GT911 SDA - Waveshare ESP32-S3-Touch-LCD-7
-#define TOUCH_SCL_PIN 20 // GT911 SCL
-#define TOUCH_INT_PIN -1 // GT911 INT (not used in polling)
-#define TOUCH_RST_PIN 38 // GT911 RST
+#define TOUCH_SDA_PIN 8  // GT911 SDA - Waveshare ESP32-S3-Touch-LCD-7
+#define TOUCH_SCL_PIN 9  // GT911 SCL
+#define TOUCH_INT_PIN 4  // GT911 INT pin (optional, matching wiki)
+#define TOUCH_RST_PIN -1 // GT911 RST — handled by CH422G on non-B board
 #define TFT_BL_PIN 2     // RGB LCD backlight
 
 // RGB panel profile selector:
 // 0 = Waveshare-style 7" profile (original project mapping)
 // 1 = ESP32_8048S070 profile
 // 2 = ST7262 800x480 profile from Arduino_GFX examples
-#define RGB_PANEL_PROFILE 0
+#define RGB_PANEL_PROFILE 3
 
 // Default RGB pin map (used by profile 1 if you keep these macros)
 #define RGB_DE 41

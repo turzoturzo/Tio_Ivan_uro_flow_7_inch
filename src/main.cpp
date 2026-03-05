@@ -682,8 +682,13 @@ static AppState deriveState() {
 // ───────────────────────────────────────────────────────────────────
 
 void setup() {
-  Serial.begin(
-      115200); // UART0 (GPIO43/44) — not visible via USB in CDC_ON_BOOT=0 mode
+  Serial.begin(115200);
+  // Wait for Serial to initialize (native USB CDC takes a moment)
+  uint32_t start = millis();
+  while (!Serial && (millis() - start < 2000)) {
+    delay(10);
+  }
+  Serial.println("\n\n=== BOOT START === v" FW_VERSION);
 
   // ── Display init (SPI, no USB dependency) ────────────────────────────────
   gDisplay.begin();

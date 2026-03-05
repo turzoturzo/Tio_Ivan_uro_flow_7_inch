@@ -3,8 +3,27 @@
 #include "main.h" // AppState enum
 #include <Arduino.h>
 #include <Arduino_DataBus.h>
+#include <Wire.h>
 #include <display/Arduino_RGB_Display.h>
+#include <esp_heap_caps.h>
+#include <esp_lcd_panel_ops.h>
 #include <initGT911.h>
+
+// ── Display ──────────────────────────────────────────────────────────
+// We use the stock Arduino_RGB_Display. The previous 'FixedRGBDisplay' hack
+// is no longer required for modern Arduino_GFX versions (1.4.9+).
+// The CH422G expander handles the hardware reset and backlight.
+
+// CH422G I2C IO expander (ESP32-S3-Touch-LCD-7 non-B only)
+// Controls LCD_RST, LCD_BL (backlight), TP_RST (touch reset) via I2C
+#define CH422G_ADDR_OC 0x23 // output-configure register  (8-bit 0x46 >> 1)
+#define CH422G_ADDR_WR 0x38 // write-output register      (8-bit 0x70 >> 1)
+
+static void ch422g_write(uint8_t addr, uint8_t data) {
+  Wire.beginTransmission(addr);
+  Wire.write(data);
+  Wire.endTransmission();
+}
 
 // ── Colour palette
 // ────────────────────────────────────────────────────────────
@@ -54,20 +73,32 @@ Display::Display()
 }
 
 void Display::begin() {
+  // ── CH422G IO expander init ───────────────────────────────────────────────
+  // On the ESP32-S3-Touch-LCD-7 (non-B), LCD_RST, LCD_BL, and TP_RST are all
+  // wired through a CH422G I2C IO expander, NOT direct GPIOs.
+  // GPIOs 2 and 38 are RGB data lines on this board (R1, B1), not BL/RST.
+  Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
+  ch422g_write(CH422G_ADDR_OC,
+               0xFF); // set all CH422G pins (IO0-IO7) to output mode
+  ch422g_write(CH422G_ADDR_WR, 0x00); // assert all pins (Reset, etc.) low
+  delay(100);
+  ch422g_write(CH422G_ADDR_WR, 0xFF); // release reset, enable backlight
+  delay(200);                         // wait for panel to stabilize
+
   Arduino_ESP32RGBPanel *rgbpanel = nullptr;
 
 #if RGB_PANEL_PROFILE == 0
   Serial.println("[DISPLAY] RGB profile 0: Waveshare-style");
   rgbpanel = new Arduino_ESP32RGBPanel(
-      41 /* DE */, 42 /* VSYNC */, 46 /* HSYNC */, 40 /* PCLK */,
-      45 /* R0 */, 48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */,
-      13 /* G0 */, 12 /* G1 */, 11 /* G2 */, 10 /* G3 */, 9 /* G4 */,
-      3 /* G5 */, 8 /* B0 */, 16 /* B1 */, 15 /* B2 */, 7 /* B3 */,
-      6 /* B4 */, 0 /* hsync_polarity */, 40 /* hsync_front_porch */,
-      10 /* hsync_pulse_width */, 10 /* hsync_back_porch */,
-      0 /* vsync_polarity */, 40 /* vsync_front_porch */,
-      10 /* vsync_pulse_width */, 10 /* vsync_back_porch */,
-      1 /* pclk_active_neg */, 16000000 /* prefer_speed */);
+      41 /* DE */, 42 /* VSYNC */, 46 /* HSYNC */, 40 /* PCLK */, 45 /* R0 */,
+      48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */, 13 /* G0 */,
+      12 /* G1 */, 11 /* G2 */, 10 /* G3 */, 9 /* G4 */, 3 /* G5 */, 8 /* B0 */,
+      16 /* B1 */, 15 /* B2 */, 7 /* B3 */, 6 /* B4 */, 0 /* hsync_polarity */,
+      40 /* hsync_front_porch */, 10 /* hsync_pulse_width */,
+      10 /* hsync_back_porch */, 0 /* vsync_polarity */,
+      40 /* vsync_front_porch */, 10 /* vsync_pulse_width */,
+      10 /* vsync_back_porch */, 1 /* pclk_active_neg */,
+      16000000 /* prefer_speed */);
 #elif RGB_PANEL_PROFILE == 1
   Serial.println("[DISPLAY] RGB profile 1: ESP32_8048S070");
   rgbpanel = new Arduino_ESP32RGBPanel(
@@ -81,37 +112,50 @@ void Display::begin() {
 #elif RGB_PANEL_PROFILE == 2
   Serial.println("[DISPLAY] RGB profile 2: ST7262-800x480");
   rgbpanel = new Arduino_ESP32RGBPanel(
-      40 /* DE */, 41 /* VSYNC */, 39 /* HSYNC */, 42 /* PCLK */,
-      45 /* R0 */, 48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */,
-      5 /* G0 */, 6 /* G1 */, 7 /* G2 */, 15 /* G3 */, 16 /* G4 */,
-      4 /* G5 */, 8 /* B0 */, 3 /* B1 */, 46 /* B2 */, 9 /* B3 */,
-      1 /* B4 */, 0 /* hsync_polarity */, 8 /* hsync_front_porch */,
-      4 /* hsync_pulse_width */, 8 /* hsync_back_porch */,
-      0 /* vsync_polarity */, 8 /* vsync_front_porch */,
-      4 /* vsync_pulse_width */, 8 /* vsync_back_porch */,
+      40 /* DE */, 41 /* VSYNC */, 39 /* HSYNC */, 42 /* PCLK */, 45 /* R0 */,
+      48 /* R1 */, 47 /* R2 */, 21 /* R3 */, 14 /* R4 */, 5 /* G0 */,
+      6 /* G1 */, 7 /* G2 */, 15 /* G3 */, 16 /* G4 */, 4 /* G5 */, 8 /* B0 */,
+      3 /* B1 */, 46 /* B2 */, 9 /* B3 */, 1 /* B4 */, 0 /* hsync_polarity */,
+      8 /* hsync_front_porch */, 4 /* hsync_pulse_width */,
+      8 /* hsync_back_porch */, 0 /* vsync_polarity */,
+      8 /* vsync_front_porch */, 4 /* vsync_pulse_width */,
+      8 /* vsync_back_porch */, 1 /* pclk_active_neg */,
+      16000000 /* prefer_speed */);
+#elif RGB_PANEL_PROFILE == 3
+  Serial.println("[DISPLAY] RGB profile 3: Waveshare-style 7\" 800x480");
+  // Waveshare ESP32-S3-Touch-LCD-7 Rev 1.2 Pinout:
+  // DE=5, VSYNC=3, HSYNC=46, PCLK=7
+  // R[0..4]=1,2,42,41,40 | G[0..5]=39,0,45,48,47,21 | B[0..4]=14,38,18,17,10
+  rgbpanel = new Arduino_ESP32RGBPanel(
+      5 /* DE */, 3 /* VSYNC */, 46 /* HSYNC */, 7 /* PCLK */, 1 /* R0 */,
+      2 /* R1 */, 42 /* R2 */, 41 /* R3 */, 40 /* R4 */, 39 /* G0 */,
+      0 /* G1 */, 45 /* G2 */, 48 /* G3 */, 47 /* G4 */, 21 /* G5 */,
+      14 /* B0 */, 38 /* B1 */, 18 /* B2 */, 17 /* B3 */, 10 /* B4 */,
+      0 /* hsync_p */, 40 /* h_fp */, 48 /* h_pw */, 128 /* h_bp */,
+      0 /* vsync_p */, 32 /* v_fp */, 13 /* v_pw */, 10 /* v_bp */,
       1 /* pclk_active_neg */, 16000000 /* prefer_speed */);
 #else
 #error "Unsupported RGB_PANEL_PROFILE"
 #endif
 
-  _gfx = new Arduino_RGB_Display(800, 480, rgbpanel);
+  Serial.printf("[DISPLAY] PSRAM Size: %d KB\n",
+                (int)(ESP.getPsramSize() / 1024));
+  Serial.println("[DISPLAY] Starting RGB GFX...");
+
+  _gfx = new Arduino_RGB_Display(800, 480, rgbpanel, 0, false);
   if (!_gfx->begin()) {
     Serial.println("[DISPLAY] RGB init failed (framebuffer alloc / PSRAM)");
     return;
   }
-  _gfx->fillScreen(COL_BG);
 
-  pinMode(TFT_BL_PIN, OUTPUT);
-  digitalWrite(TFT_BL_PIN, HIGH);
-
-  // Quick visual probe to confirm panel writes before normal UI starts.
+  // Color probe: standard library fillScreen handles DMA syncing.
   _gfx->fillScreen(0xF800);
-  delay(60);
+  delay(300); // red
   _gfx->fillScreen(0x07E0);
-  delay(60);
+  delay(300); // green
   _gfx->fillScreen(0x001F);
-  delay(60);
-  _gfx->fillScreen(COL_BG);
+  delay(300);               // blue
+  _gfx->fillScreen(COL_BG); // black
 
   _touch = new initGT911(&Wire, GT911_I2C_ADDR_BA);
   if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {
@@ -119,6 +163,7 @@ void Display::begin() {
   }
 
   _drawTitle();
+  _gfx->flush();
 }
 
 bool Display::getTouch(int &x, int &y) {
@@ -143,6 +188,7 @@ void Display::showBoot(const char *msg) {
   _gfx->setTextSize(2); // larger for 7" screen
   _gfx->setCursor(20, 150);
   _gfx->print(msg);
+  _gfx->flush();
 }
 
 void Display::showBootCountdown(int sec, bool timeSynced, int csvCount,
@@ -230,6 +276,7 @@ void Display::showBootCountdown(int sec, bool timeSynced, int csvCount,
     _gfx->setTextColor(COL_YELLOW);
     _gfx->print("No WiFi configured");
   }
+  _gfx->flush();
 }
 
 // ── Export / MSC screen
@@ -255,6 +302,7 @@ void Display::showMscMode() {
   _gfx->setTextColor(COL_DIMGREY);
   _gfx->setCursor(320, 210);
   _gfx->print("Tap screen to exit");
+  _gfx->flush();
 }
 
 // ── BLE export delete prompt
@@ -298,6 +346,7 @@ void Display::showBleExportDeletePrompt(int filesCount) {
   _gfx->setTextColor(COL_DIMGREY);
   _gfx->setCursor(330, 298);
   _gfx->print("(auto-exit in 15s)");
+  _gfx->flush();
 }
 
 void Display::showBleExportDeleted(int deletedCount) {
@@ -321,6 +370,7 @@ void Display::showBleExportDeleted(int deletedCount) {
   _gfx->setCursor(120, 220);
   _gfx->setTextSize(2);
   _gfx->print("Restarting...");
+  _gfx->flush();
 }
 
 // ── WiFi setup mode screen
@@ -384,6 +434,7 @@ void Display::showWifiSetup(bool timeSynced, const char *storedSsid) {
   _gfx->setCursor(120, 292);
   _gfx->setTextSize(2);
   _gfx->print("Tap to exit");
+  _gfx->flush();
 }
 
 // ── Post-session success screen
@@ -419,6 +470,7 @@ void Display::showSessionComplete(uint32_t rowCount, uint32_t durationMs) {
   _gfx->setCursor(120, 248);
   _gfx->setTextSize(2);
   _gfx->print("Going into low power mode...");
+  _gfx->flush();
 }
 
 // ── Main update
@@ -440,6 +492,7 @@ void Display::update(AppState state, float weight_g, bool logging,
       _drawRemovalCountdownOverlay(weightRemovalSecs);
     }
     _lastCountdownSecs = weightRemovalSecs;
+    _gfx->flush();
     return;
   }
 
@@ -516,6 +569,7 @@ void Display::update(AppState state, float weight_g, bool logging,
 
   // Time sync dot
   _gfx->fillCircle(228, 10, 5, time_synced ? COL_GREEN : COL_YELLOW);
+  _gfx->flush();
 }
 
 // ── Session active green screen
