@@ -48,27 +48,27 @@
 #define TOUCH_RST_PIN 38 // GT911 RST
 #define TFT_BL_PIN 2     // RGB LCD backlight
 
-// RGB Panel Pins
+// RGB Panel pins for ESP32_8048S070 / Waveshare ESP32-S3-Touch-LCD-7
 #define RGB_DE 41
-#define RGB_VSYNC 42
-#define RGB_HSYNC 46
-#define RGB_PCLK 40
-#define RGB_R0 45
-#define RGB_R1 48
+#define RGB_VSYNC 40
+#define RGB_HSYNC 39
+#define RGB_PCLK 42
+#define RGB_R0 14
+#define RGB_R1 21
 #define RGB_R2 47
-#define RGB_R3 21
-#define RGB_R4 14
-#define RGB_G0 13
-#define RGB_G1 12
-#define RGB_G2 11
-#define RGB_G3 10
-#define RGB_G4 9
-#define RGB_G5 3
-#define RGB_B0 8
-#define RGB_B1 16
-#define RGB_B2 15
-#define RGB_B3 7
-#define RGB_B4 6
+#define RGB_R3 48
+#define RGB_R4 45
+#define RGB_G0 9
+#define RGB_G1 46
+#define RGB_G2 3
+#define RGB_G3 8
+#define RGB_G4 16
+#define RGB_G5 1
+#define RGB_B0 15
+#define RGB_B1 7
+#define RGB_B2 6
+#define RGB_B3 5
+#define RGB_B4 4
 
 // ─── NVS keys ────────────────────────────────────────────────────────────────
 #define NVS_NAMESPACE "pearls"

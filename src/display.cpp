@@ -58,14 +58,16 @@ void Display::begin() {
       RGB_DE, RGB_VSYNC, RGB_HSYNC, RGB_PCLK, RGB_R0, RGB_R1, RGB_R2, RGB_R3,
       RGB_R4, RGB_G0, RGB_G1, RGB_G2, RGB_G3, RGB_G4, RGB_G5, RGB_B0, RGB_B1,
       RGB_B2, RGB_B3, RGB_B4, 0 /* hsync_polarity */,
-      40 /* hsync_front_porch */, 10 /* hsync_pulse_width */,
-      10 /* hsync_back_porch */, 0 /* vsync_polarity */,
-      40 /* vsync_front_porch */, 10 /* vsync_pulse_width */,
-      10 /* vsync_back_porch */, 1 /* pclk_active_neg */,
-      16000000 /* prefer_speed */);
+      180 /* hsync_front_porch */, 30 /* hsync_pulse_width */,
+      16 /* hsync_back_porch */, 0 /* vsync_polarity */,
+      12 /* vsync_front_porch */, 13 /* vsync_pulse_width */,
+      10 /* vsync_back_porch */, 1 /* pclk_active_neg */);
 
   _gfx = new Arduino_RGB_Display(800, 480, rgbpanel);
-  _gfx->begin();
+  if (!_gfx->begin()) {
+    Serial.println("[DISPLAY] RGB init failed (framebuffer alloc / PSRAM)");
+    return;
+  }
   _gfx->fillScreen(COL_BG);
 
   pinMode(TFT_BL_PIN, OUTPUT);
