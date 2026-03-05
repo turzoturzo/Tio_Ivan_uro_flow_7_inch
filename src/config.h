@@ -1,0 +1,78 @@
+#pragma once
+
+// ─── Firmware version ───────────────────────────────────────────────────────
+#define FW_VERSION "1.0.0"
+#define DEVICE_NAME "pearls_logger"
+
+// ─── WiFi credentials (for NTP time sync on boot) ───────────────────────────
+// WARNING: do not commit real credentials to a public repository
+#define WIFI_SSID "Jemma-Judo-Net-6"
+#define WIFI_PASS "1MoarFud??"
+#define WIFI_TIMEOUT_S 12
+
+// Cloud upload endpoint (e.g., a Webhook or API)
+#define CLOUD_UPLOAD_URL                                                       \
+  "https://script.google.com/macros/s/"                                        \
+  "AKfycbwt8VMsRdyy_8KSigtyUo8gjyx9N1xk6sx3Ueue-DKrIPoGJcNuaZi-"               \
+  "9OjitMhbPiJkvw/exec"
+
+// ─── Acaia Pearl S BLE ───────────────────────────────────────────────────────
+#define ACAIA_SEARCH_NAME "ACAIA" // substring match on advertised name
+// ISSC transparent serial service (used by Acaia Pearl S)
+#define ACAIA_SERVICE_UUID "49535343-FE7D-4AE5-8FA9-9FAFD205E455"
+#define ACAIA_CHAR_NOTIFY "49535343-1e4d-4bd9-ba61-23c647249616"
+#define ACAIA_CHAR_WRITE "49535343-8841-43f4-a8d4-ecbe34729bb3"
+
+// Acaia protocol message types
+#define ACAIA_MSG_SYSTEM 0
+#define ACAIA_MSG_HEARTBEAT 2
+#define ACAIA_MSG_TARE 4
+
+#define HEARTBEAT_INTERVAL_MS 9000UL // scale drops connection if no heartbeat
+
+// ─── Session parameters ──────────────────────────────────────────────────────
+#define SESSION_MIN_DURATION_MS 3000UL // discard sessions shorter than this
+#define SESSION_TIMEOUT_MS 45000UL // end active session after this idle period
+#define CONNECT_TO_WEIGHT_TIMEOUT_MS                                           \
+  90000UL // after BLE connect, wait this long for first weight
+#define LOG_FLUSH_INTERVAL_MS 2000UL // buffered write flush period
+#define WEIGHT_REMOVAL_THRESHOLD_G                                             \
+  5.0f // g — weight reading below this = "scale empty"
+#define WEIGHT_REMOVAL_TIMEOUT_MS                                              \
+  5000UL // ms — sustained below threshold → end session
+
+// ─── Hardware pins ───────────────────────────────────────────────────────────
+#define TOUCH_SDA_PIN 19 // GT911 SDA - Waveshare ESP32-S3-Touch-LCD-7
+#define TOUCH_SCL_PIN 20 // GT911 SCL
+#define TOUCH_INT_PIN -1 // GT911 INT (not used in polling)
+#define TOUCH_RST_PIN 38 // GT911 RST
+#define TFT_BL_PIN 2     // RGB LCD backlight
+
+// RGB Panel Pins
+#define RGB_DE 41
+#define RGB_VSYNC 42
+#define RGB_HSYNC 46
+#define RGB_PCLK 40
+#define RGB_R0 45
+#define RGB_R1 48
+#define RGB_R2 47
+#define RGB_R3 21
+#define RGB_R4 14
+#define RGB_G0 13
+#define RGB_G1 12
+#define RGB_G2 11
+#define RGB_G3 10
+#define RGB_G4 9
+#define RGB_G5 3
+#define RGB_B0 8
+#define RGB_B1 16
+#define RGB_B2 15
+#define RGB_B3 7
+#define RGB_B4 6
+
+// ─── NVS keys ────────────────────────────────────────────────────────────────
+#define NVS_NAMESPACE "pearls"
+#define NVS_KEY_MAC "scale_mac"
+#define NVS_KEY_SEQNUM "seq_num"
+#define NVS_KEY_WIFI_SSID "wifi_ssid"
+#define NVS_KEY_WIFI_PASS "wifi_pass"
