@@ -494,8 +494,10 @@ void Display::update(AppState state, float weight_g, bool logging,
 
   _gfx->setTextSize(1);
 
-  _drawLabel(10, ROW1_Y, "BLE: ", bleStr, bleCol, _lastBleStatus);
-  _drawLabel(10, ROW2_Y, "LOG: ", logStr, logCol, _lastLogStatus);
+  _drawLabel(10, ROW1_Y, "BLE: ", bleStr, bleCol, _lastBleStatus,
+             sizeof(_lastBleStatus));
+  _drawLabel(10, ROW2_Y, "LOG: ", logStr, logCol, _lastLogStatus,
+             sizeof(_lastLogStatus));
 
   if (strcmp(elStr, _lastElapsed) != 0) {
     _gfx->setTextColor(COL_BG, COL_BG);
@@ -507,8 +509,10 @@ void Display::update(AppState state, float weight_g, bool logging,
     strlcpy(_lastElapsed, elStr, sizeof(_lastElapsed));
   }
 
-  _drawLabel(10, ROW3_Y, "ROWS: ", rowStr, COL_WHITE, _lastRows);
-  _drawLabel(10, ROW4_Y, "WT:  ", wtStr, COL_WHITE, _lastWeight);
+  _drawLabel(10, ROW3_Y, "ROWS: ", rowStr, COL_WHITE, _lastRows,
+             sizeof(_lastRows));
+  _drawLabel(10, ROW4_Y, "WT:  ", wtStr, COL_WHITE, _lastWeight,
+             sizeof(_lastWeight));
 
   // Time sync dot
   _gfx->fillCircle(228, 10, 5, time_synced ? COL_GREEN : COL_YELLOW);
@@ -645,7 +649,8 @@ void Display::_drawTitle() {
 }
 
 void Display::_drawLabel(int x, int y, const char *label, const char *value,
-                         uint16_t valColor, char *prevValue) {
+                         uint16_t valColor, char *prevValue,
+                         size_t prevValueSize) {
   if (strcmp(value, prevValue) == 0)
     return;
 
@@ -663,7 +668,7 @@ void Display::_drawLabel(int x, int y, const char *label, const char *value,
   _gfx->setTextColor(valColor, COL_BG);
   _gfx->print(value);
 
-  strlcpy(prevValue, value, 24);
+  strlcpy(prevValue, value, prevValueSize);
 }
 
 uint16_t Display::_bleColor(AppState state) {

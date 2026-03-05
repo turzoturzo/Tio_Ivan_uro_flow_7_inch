@@ -52,7 +52,7 @@ private:
   char _lastWeight[16];
 
   void _drawLabel(int x, int y, const char *label, const char *value,
-                  uint16_t valColor, char *prevValue);
+                  uint16_t valColor, char *prevValue, size_t prevValueSize);
   void _drawTitle();
   uint16_t _bleColor(AppState state);
 

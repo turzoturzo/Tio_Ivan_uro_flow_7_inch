@@ -835,28 +835,36 @@ void loop() {
                                  gSession.endedDurationMs());
     delay(2000); // Show checkmark for 2 seconds
 
-    // Trigger Cloud Upload (Google Sheets)
-    gDisplay.showBoot("Cloud Syncing...");
     String savedName = gSession.lastSavedName();
-    int status = gSession.uploadToGoogleSheet(savedName);
+    bool measurementSaved = savedName.length() > 0;
 
-    if (status == 1) {
-      gDisplay.showBoot("Cloud Sync OK");
-      delay(2000);
-    } else {
-      char failMsg[64];
-      if (status == 0) {
-        snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(WiFi Timeout)");
+    if (measurementSaved) {
+      // Trigger Cloud Upload (Google Sheets)
+      gDisplay.showBoot("Cloud Syncing...");
+      int status = gSession.uploadToGoogleSheet(savedName);
+
+      if (status == 1) {
+        gDisplay.showBoot("Cloud Sync OK");
+        delay(2000);
       } else {
-        snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(Code: %d)",
-                 status);
+        char failMsg[64];
+        if (status == 0) {
+          snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(WiFi Timeout)");
+        } else {
+          snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(Code: %d)",
+                   status);
+        }
+        gDisplay.showBoot(failMsg);
+        delay(6000); // Extra time to read the error code
       }
-      gDisplay.showBoot(failMsg);
-      delay(6000); // Extra time to read the error code
+    } else {
+      gDisplay.showBoot("Measurement too short\nNot saved");
+      delay(2500);
     }
 
     // After success checkmark, show summary before sleep
-    gDisplay.showBoot("Measurement Saved");
+    gDisplay.showBoot(measurementSaved ? "Measurement Saved"
+                                       : "No file was saved");
     delay(1500);
 
     digitalWrite(TFT_BL_PIN, LOW); // backlight off

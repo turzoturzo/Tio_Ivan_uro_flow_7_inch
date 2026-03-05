@@ -1,6 +1,7 @@
 #include "session.h"
 #include "config.h"
 #include <HTTPClient.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <time.h>
@@ -256,17 +257,42 @@ String Session::_buildFilename() const {
 }
 
 int Session::uploadToGoogleSheet(const String &path) {
+  if (path.length() == 0) {
+    Serial.println("[Cloud] No saved CSV path; skipping upload");
+    return -1;
+  }
+
   if (strlen(CLOUD_UPLOAD_URL) < 10 ||
       strstr(CLOUD_UPLOAD_URL, "your-cloud-endpoint")) {
     Serial.println("[Cloud] No valid upload URL configured");
     return -1;
   }
 
+  String wifiSsid = WIFI_SSID;
+  String wifiPass = WIFI_PASS;
+  bool haveCreds = strcmp(WIFI_SSID, "YourWiFiSSID") != 0;
+
+  Preferences prefs;
+  if (prefs.begin(NVS_NAMESPACE, true)) {
+    String nvsSsid = prefs.getString(NVS_KEY_WIFI_SSID, "");
+    String nvsPass = prefs.getString(NVS_KEY_WIFI_PASS, "");
+    prefs.end();
+    if (nvsSsid.length() > 0) {
+      wifiSsid = nvsSsid;
+      wifiPass = nvsPass;
+      haveCreds = true;
+    }
+  }
+  if (!haveCreds) {
+    Serial.println("[Cloud] No WiFi credentials available");
+    return 0;
+  }
+
   Serial.println("[Cloud] Connecting to WiFi...");
   WiFi.disconnect(); // Ensure fresh start
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
 
   uint32_t deadline = millis() + 12000;
   while (WiFi.status() != WL_CONNECTED && millis() < deadline) {

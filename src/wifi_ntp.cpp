@@ -8,7 +8,7 @@ bool syncTimeViaNtp(const char* ssid, const char* pass, int timeout_s) {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, pass);
 
-    uint32_t deadline = millis() + (uint32_t)timeout_s * 1000UL / 2;
+    uint32_t deadline = millis() + (uint32_t)timeout_s * 1000UL;
     while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
         delay(200);
     }
@@ -26,7 +26,7 @@ bool syncTimeViaNtp(const char* ssid, const char* pass, int timeout_s) {
     tzset();
 
     // Wait for valid epoch
-    deadline = millis() + (uint32_t)timeout_s * 1000UL / 2;
+    deadline = millis() + (uint32_t)timeout_s * 1000UL;
     while (time(nullptr) < 1000000000UL && millis() < deadline) {
         delay(200);
     }
