@@ -195,27 +195,36 @@ void BleAcaia::_subscribeAndIdentify() {
   }
 
   // Subscribe to notifications
-  if (!_charNotify->subscribe(true, _notifyCallback)) {
-    Serial.println("[BLE] Subscribe failed");
-    _client->disconnect();
+  if (_charNotify && _client->isConnected()) {
+    if (!_charNotify->subscribe(true, _notifyCallback)) {
+      Serial.println("[BLE] Subscribe failed");
+      _client->disconnect();
+      return;
+    }
+  } else {
+    Serial.println("[BLE] Cannot subscribe — disconnected or null char");
     return;
   }
 
   delay(300);
 
   // Send identification (new Acaia protocol, type 0x0B)
-  static const uint8_t identCmd[20] = {0xef, 0xdd, 0x0b, 0x30, 0x31, 0x32, 0x33,
-                                       0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30,
-                                       0x31, 0x32, 0x33, 0x34, 0x9a, 0x6d};
-  _charWrite->writeValue(identCmd, sizeof(identCmd), false);
+  if (_charWrite && _client->isConnected()) {
+    static const uint8_t identCmd[20] = {
+        0xef, 0xdd, 0x0b, 0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36,
+        0x37, 0x38, 0x39, 0x30, 0x31, 0x32, 0x33, 0x34, 0x9a, 0x6d};
+    _charWrite->writeValue(identCmd, sizeof(identCmd), false);
+  }
 
   delay(300);
 
   // Request weight notifications (new Acaia protocol, type 0x0C)
-  static const uint8_t notifCmd[14] = {0xef, 0xdd, 0x0c, 0x09, 0x00,
-                                       0x01, 0x01, 0x02, 0x02, 0x05,
-                                       0x03, 0x04, 0x15, 0x06};
-  _charWrite->writeValue(notifCmd, sizeof(notifCmd), false);
+  if (_charWrite && _client->isConnected()) {
+    static const uint8_t notifCmd[14] = {0xef, 0xdd, 0x0c, 0x09, 0x00,
+                                         0x01, 0x01, 0x02, 0x02, 0x05,
+                                         0x03, 0x04, 0x15, 0x06};
+    _charWrite->writeValue(notifCmd, sizeof(notifCmd), false);
+  }
 
   _state = State::CONNECTED;
   _lastHeartbeat = millis();

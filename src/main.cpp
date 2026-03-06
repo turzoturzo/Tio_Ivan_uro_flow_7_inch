@@ -17,6 +17,7 @@
 #include "display.h"
 #include "main.h"
 #include "session.h"
+#include "ui.h"
 #include "wifi_ntp.h"
 
 // ── Globals
@@ -33,10 +34,7 @@ static bool gPrefsOpen = false;
 static uint32_t gLastDisplayMs = 0;
 static const uint32_t DISPLAY_INTERVAL_MS = 200; // 5 Hz
 
-// LVGL UI Pointers
-static lv_obj_t *main_chart = nullptr;
-static lv_chart_series_t *main_ser = nullptr;
-static lv_obj_t *main_label = nullptr;
+// UI handling is now managed by ui.h/ui.cpp
 static lv_obj_t *bg_panel = nullptr;
 
 // Touch handling is now managed by gDisplay using the GT911 driver.
@@ -741,28 +739,8 @@ void setup() {
   // ── Display init (SPI, no USB dependency) ────────────────────────────────
   gDisplay.begin();
 
-  // ── Build Base LVGL Test Screen ───────────────────────────────────────────
-  lv_obj_t *bg = lv_obj_create(lv_scr_act());
-  lv_obj_set_size(bg, 800, 480);
-  lv_obj_set_style_bg_color(bg, lv_color_hex(0x1a1a1a), 0);
-
-  lv_obj_t *lbl = lv_label_create(bg);
-  lv_label_set_text(lbl, "UroFlow LVGL Base UI Active");
-  lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 20);
-  lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
-
-  main_chart = lv_chart_create(bg);
-  lv_obj_set_size(main_chart, 600, 300);
-  lv_obj_align(main_chart, LV_ALIGN_CENTER, 0, 20);
-  lv_chart_set_type(main_chart, LV_CHART_TYPE_LINE);
-  lv_chart_set_range(main_chart, LV_CHART_AXIS_PRIMARY_Y, 0,
-                     1000); // 0-1kg range
-  lv_chart_set_point_count(main_chart, CHART_BUF_SIZE);
-  main_ser = lv_chart_add_series(main_chart, lv_palette_main(LV_PALETTE_BLUE),
-                                 LV_CHART_AXIS_PRIMARY_Y);
-  lv_chart_set_next_value(main_chart, main_ser, 0);
-
+  // ── Build Base LVGL UI ───────────────────────────────────────────────────
+  ui_init();
   lv_timer_handler(); // Force an initial render pass
 
   // ── Initialise touch controller early (handled by Display::begin()) ──
@@ -770,12 +748,14 @@ void setup() {
   // ── FFat: mount early so we can show file count on boot screen ───────────
   // Partition label "ffat" matches partitions_8MB.csv (subtype=fat).
   // true = format on first use (creates FAT filesystem on blank partition).
-  gDisplay.showBoot("Mounting storage...");
+  ui_set_boot_status("Mounting storage...", 10);
   if (!FFat.begin(true)) {
-    gDisplay.showBoot("Storage ERROR!\nReflash device.");
+    ui_set_boot_status("Storage ERROR!\nReflash device.", 0);
     Serial.println("[FS] FFat mount failed");
-    while (true)
-      delay(1000);
+    while (true) {
+      lv_timer_handler();
+      delay(100);
+    }
   }
   Serial.printf("[FS] Free: %lu KB\n",
                 (unsigned long)(FFat.totalBytes() - FFat.usedBytes()) / 1024);
@@ -810,9 +790,9 @@ void setup() {
   // bleTimeSync_start();
 
   for (int remaining = 10; remaining >= 0; remaining--) {
-    gDisplay.showBootCountdown(remaining, gTimeSynced, csvCount,
-                               storedWifiSsid.length() ? storedWifiSsid.c_str()
-                                                       : nullptr);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "Starting in %ds...", remaining);
+    ui_set_boot_status(buf, 100 - (remaining * 10));
     uint32_t tickStart = millis();
     while (millis() - tickStart < 1000) {
       int tx = 0, ty = 0;
@@ -902,68 +882,20 @@ void loop() {
   gBle.tick();
   gSession.tick();
 
-  // 1. Sync Session data to LVGL UI if active
-  if (gSession.isActive() && main_chart && main_ser) {
-    static uint32_t lastChartUpdate = 0;
-    if (millis() - lastChartUpdate >= 100) { // Update UI at 10Hz
-      lastChartUpdate = millis();
-
-      // Sync the most recent weight to the chart
-      // Note: For a more accurate "rolling" chart, we could sync the whole
-      // buffer, but for now, just pushing the latest point is sufficient for
-      // LVGL's scrolling.
-      lv_chart_set_next_value(main_chart, main_ser,
-                              (lv_coord_t)gSession.lastWeight());
-    }
-  }
-
-  // ── Post-session: upload and wait for restart ─────────────────────
-  // We use LVGL to render an opaque overlay.
-  if (gSession.state() == Session::State::ENDED) {
-    bg_panel = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(bg_panel, 800, 480);
-    lv_obj_align(bg_panel, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_color(bg_panel, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_bg_opa(bg_panel, LV_OPA_COVER, 0); // Opaque to hide chart
-    lv_obj_set_style_border_width(bg_panel, 0, 0);
-
-    lv_obj_t *status_label = lv_label_create(bg_panel);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_24, 0);
-    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -40);
-
-    String savedName = gSession.lastSavedName();
-    bool measurementSaved = savedName.length() > 0;
-
-    if (measurementSaved) {
-      lv_label_set_text(status_label, "Cloud Syncing...");
-      lv_task_handler(); // Update screen before blocking
-
-      int status = gSession.uploadToGoogleSheet(savedName);
-
-      if (status == 1) {
-        lv_label_set_text(status_label, "Cloud Sync OK");
-      } else {
-        lv_label_set_text_fmt(status_label, "Cloud Sync FAIL (Code: %d)",
-                              status);
-      }
-    } else {
-      lv_label_set_text(status_label, "Measurement too short to save.");
-    }
-
-    lv_obj_t *btn = lv_btn_create(bg_panel);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 80);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x007BFF), 0);
-    lv_obj_set_size(btn, 300, 70);
-
-    lv_obj_t *btn_label = lv_label_create(btn);
-    lv_label_set_text(btn_label, "Start New Measurement");
-    lv_obj_center(btn_label);
-
-    lv_obj_add_event_cb(btn, restart_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_task_handler(); // Process one more time to show updated status
-
-    gSession.acknowledgeEnded();
+  // Update UI state based on system status
+  if (gSession.state() == Session::State::UPLOAD) {
+    ui_set_state(UIState::SYNCING);
+    // Note: upload is currently synchronous in Session::uploadToGoogleSheet
+  } else if (gSession.isActive()) {
+    ui_set_state(UIState::ACTIVE);
+    ui_update_weight(gSession.lastWeight(),
+                     (millis() - gSession.startTime()) / 1000);
+  } else if (gBle.isConnected()) {
+    ui_set_state(UIState::READY);
+  } else {
+    // If not connected and not uploading, show searching/boot
+    ui_set_state(UIState::BOOT);
+    ui_set_boot_status("Searching for scale...", 0);
   }
 
   // Persist MAC once connected
@@ -988,11 +920,5 @@ void loop() {
   }
 
   gState = deriveState();
-
-  if (millis() - gLastDisplayMs >= DISPLAY_INTERVAL_MS) {
-    gLastDisplayMs = millis();
-    // Legacy display primitive drawing disabled — LVGL now owns the screen
-  }
-
   delay(5);
 }

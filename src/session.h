@@ -7,7 +7,7 @@
 
 class Session {
 public:
-  enum class State { IDLE, ACTIVE, ENDED, WAITING };
+  enum class State { IDLE, ACTIVE, ENDED, UPLOAD, WAITING };
 
   Session();
 
@@ -29,7 +29,9 @@ public:
   // Reset to IDLE to allow a new measurement
   void reset() {
     _state = State::IDLE;
+    _sessionStartMs = 0;
     _lastWeightMs = millis();
+    _lastSavedName = "";
   }
 
   // Accessors for display
@@ -37,6 +39,7 @@ public:
   bool isActive() const { return _state == State::ACTIVE; }
   uint32_t rowCount() const { return _rowCount; }
   uint32_t elapsedMs() const;
+  uint32_t startTime() const { return _sessionStartMs; }
   float lastWeight() const { return _lastWeight; }
   int weightRemovalCountdownSecs() const;
   uint32_t seqNum() const { return _seqNum; }
