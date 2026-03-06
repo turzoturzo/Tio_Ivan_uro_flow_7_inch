@@ -39,9 +39,9 @@ static void ch422g_write(uint8_t addr, uint8_t data) {
 #define COL_BTN_ORANGE 0x18C3 // warm amber (BLE export button)
 #define COL_BTN_BLUE 0x24BE   // medium blue (WiFi setup button)
 
-// ── Normal-screen layout (800×480 portrait)
+// ── Normal-screen layout (800×480 landscape)
 // ───────────────────────────────────
-#define TITLE_Y 8
+#define TITLE_Y 12
 #define ROW1_Y 105 // 70 * 1.5
 #define ROW2_Y 177 // 118 * 1.5
 #define ROW3_Y 249 // 166 * 1.5
@@ -51,16 +51,16 @@ static void ch422g_write(uint8_t addr, uint8_t data) {
 // ── Session-screen layout
 // ─────────────────────────────────────────────────────
 #define SESS_HDR_H 58 // header area height
-#define CHART_X 5
-#define CHART_Y 62
-#define CHART_W 230
-#define CHART_H 214                         // y=62..275
-#define CHART_Y_END (CHART_Y + CHART_H - 1) // 275
-#define AXIS_Y 280
+#define CHART_X 200
+#define CHART_Y 80
+#define CHART_W 580
+#define CHART_H 340                         // y=80..419
+#define CHART_Y_END (CHART_Y + CHART_H - 1) // 419
+#define AXIS_Y 430
 
 // ── Boot-screen button zones (used by main.cpp for touch routing)
-// ───────────── BLE EXPORT button: y=105..180   // scaled from 80..150 WIFI
-// SETUP button: y=190..260   // scaled from 158..218
+// ───────────── BLE EXPORT button: y=105..180
+// SETUP button: y=190..260
 
 Display::Display()
     : _gfx(nullptr), _touch(nullptr), _lastState(static_cast<AppState>(-1)),
@@ -468,46 +468,49 @@ void Display::showWifiSetup(bool timeSynced, const char *storedSsid) {
 // ─────────────────────────────────────────────────────
 
 // Keyboard layout constants
-#define WK_KEY_W    76
-#define WK_KEY_H    48
-#define WK_GAP      3
-#define WK_ROW_H    (WK_KEY_H + WK_GAP + 1)  // 52
-#define WK_X0       7    // keyboard left margin
-#define WK_KB_Y     192  // first keyboard row top
-#define WK_FIELD_X  100
-#define WK_FIELD_W  690
-#define WK_FIELD_H  38
-#define WK_SSID_Y   50
-#define WK_PASS_Y   100
-#define WK_BTN_Y    146
-#define WK_BTN_H    36
+#define WK_KEY_W 76
+#define WK_KEY_H 48
+#define WK_GAP 3
+#define WK_ROW_H (WK_KEY_H + WK_GAP + 1) // 52
+#define WK_X0 7                          // keyboard left margin
+#define WK_KB_Y 192                      // first keyboard row top
+#define WK_FIELD_X 100
+#define WK_FIELD_W 690
+#define WK_FIELD_H 38
+#define WK_SSID_Y 50
+#define WK_PASS_Y 100
+#define WK_BTN_Y 146
+#define WK_BTN_H 36
 #define WK_STATUS_X 570
 #define WK_STATUS_W 220
 
 // Keyboard character at (row, col) — special codes:
 //   '\b' = backspace, '\n' = GO/connect, 0x01 = SHIFT, ' ' = space
 static char kbCharAt(int row, int col, bool shifted) {
-  if (row < 0 || row >= 5 || col < 0 || col >= 10) return 0;
+  if (row < 0 || row >= 5 || col < 0 || col >= 10)
+    return 0;
   static const char lo[4][11] = {
-    "1234567890", "qwertyuiop",
-    "asdfghjkl",  // 9 chars; col 9 = backspace
-    "zxcvbnm.-"   // 9 chars; col 0 = shift prefix
+      "1234567890", "qwertyuiop",
+      "asdfghjkl", // 9 chars; col 9 = backspace
+      "zxcvbnm.-"  // 9 chars; col 0 = shift prefix
   };
-  static const char hi[4][11] = {
-    "!@#$%^&*()", "QWERTYUIOP",
-    "ASDFGHJKL",  "ZXCVBNM,_"
-  };
+  static const char hi[4][11] = {"!@#$%^&*()", "QWERTYUIOP", "ASDFGHJKL",
+                                 "ZXCVBNM,_"};
   if (row == 2) {
-    if (col == 9) return '\b';
+    if (col == 9)
+      return '\b';
     return shifted ? hi[2][col] : lo[2][col];
   }
   if (row == 3) {
-    if (col == 0) return 0x01; // shift
+    if (col == 0)
+      return 0x01; // shift
     return shifted ? hi[3][col - 1] : lo[3][col - 1];
   }
   if (row == 4) {
-    if (col <= 6) return ' ';
-    if (col == 7) return shifted ? '/' : '?';
+    if (col <= 6)
+      return ' ';
+    if (col == 7)
+      return shifted ? '/' : '?';
     return '\n'; // GO
   }
   return shifted ? hi[row][col] : lo[row][col];
@@ -525,8 +528,8 @@ static void drawKeyLabel(Arduino_GFX *gfx, int x, int y, int w, int h,
 }
 
 void Display::drawWifiKeyboard(const char *ssid, const char *pass,
-                                int activeField, bool shifted,
-                                const char *status) {
+                               int activeField, bool shifted,
+                               const char *status) {
   _gfx->fillScreen(COL_BG);
 
   // Title
@@ -553,10 +556,12 @@ void Display::drawWifiKeyboard(const char *ssid, const char *pass,
 
   // CONNECT button
   _gfx->fillRoundRect(250, WK_BTN_Y, 300, WK_BTN_H, 10, COL_GREEN);
-  drawKeyLabel(_gfx, 250, WK_BTN_Y, 300, WK_BTN_H, "CONNECT", COL_WHITE, COL_GREEN);
+  drawKeyLabel(_gfx, 250, WK_BTN_Y, 300, WK_BTN_H, "CONNECT", COL_WHITE,
+               COL_GREEN);
 
   // Status
-  if (status) updateWifiStatus(status, COL_YELLOW);
+  if (status)
+    updateWifiStatus(status, COL_YELLOW);
 
   // Keyboard
   drawWifiKeys(shifted);
@@ -570,12 +575,14 @@ void Display::drawWifiKeys(bool shifted) {
       // Row 4: SPACE (keys 0-6), ? (key 7), GO (keys 8-9)
       int spaceW = 7 * WK_KEY_W + 6 * WK_GAP;
       _gfx->fillRoundRect(WK_X0, y, spaceW, WK_KEY_H, 6, COL_DIMGREY);
-      drawKeyLabel(_gfx, WK_X0, y, spaceW, WK_KEY_H, "SPACE", COL_WHITE, COL_DIMGREY);
+      drawKeyLabel(_gfx, WK_X0, y, spaceW, WK_KEY_H, "SPACE", COL_WHITE,
+                   COL_DIMGREY);
 
       int qx = WK_X0 + 7 * (WK_KEY_W + WK_GAP);
       _gfx->fillRoundRect(qx, y, WK_KEY_W, WK_KEY_H, 6, COL_DIMGREY);
-      char qBuf[2] = { shifted ? '/' : '?', 0 };
-      drawKeyLabel(_gfx, qx, y, WK_KEY_W, WK_KEY_H, qBuf, COL_WHITE, COL_DIMGREY);
+      char qBuf[2] = {shifted ? '/' : '?', 0};
+      drawKeyLabel(_gfx, qx, y, WK_KEY_W, WK_KEY_H, qBuf, COL_WHITE,
+                   COL_DIMGREY);
 
       int goX = WK_X0 + 8 * (WK_KEY_W + WK_GAP);
       int goW = 2 * WK_KEY_W + WK_GAP;
@@ -588,7 +595,7 @@ void Display::drawWifiKeys(bool shifted) {
       int x = WK_X0 + col * (WK_KEY_W + WK_GAP);
       char ch = kbCharAt(row, col, shifted);
       uint16_t bg = COL_DIMGREY;
-      char label[2] = { ch, 0 };
+      char label[2] = {ch, 0};
 
       if (ch == '\b') {
         bg = COL_RED;
@@ -622,7 +629,8 @@ void Display::updateWifiField(int field, const char *text, bool active) {
   _gfx->setTextColor(COL_WHITE, fieldBg);
   _gfx->setCursor(WK_FIELD_X + 8, y + 11);
   _gfx->setTextSize(2);
-  if (text && strlen(text) > 0) _gfx->print(text);
+  if (text && strlen(text) > 0)
+    _gfx->print(text);
 
   // Blinking-style cursor
   if (active) {
@@ -633,7 +641,8 @@ void Display::updateWifiField(int field, const char *text, bool active) {
 }
 
 void Display::updateWifiStatus(const char *status, uint16_t color) {
-  _gfx->fillRect(WK_STATUS_X, WK_BTN_Y, WK_STATUS_W, WK_BTN_H, COL_BG);
+  _gfx->fillRect(WK_STATUS_X, WK_BTN_Y, WK_STATUS_W, WK_BTN_H + 40,
+                 COL_BG); // Clear a slightly larger area just in case.
   _gfx->setTextColor(color, COL_BG);
   _gfx->setCursor(WK_STATUS_X, WK_BTN_Y + 10);
   _gfx->setTextSize(2);
@@ -642,7 +651,8 @@ void Display::updateWifiStatus(const char *status, uint16_t color) {
 
 char Display::mapWifiKeyTouch(int x, int y, bool shifted) {
   // BACK button
-  if (y >= 5 && y < 40 && x >= 700) return 0x1B;
+  if (y >= 5 && y < 40 && x >= 700)
+    return 0x1B;
 
   // SSID field
   if (y >= WK_SSID_Y && y < WK_SSID_Y + WK_FIELD_H && x >= WK_FIELD_X)
@@ -657,27 +667,34 @@ char Display::mapWifiKeyTouch(int x, int y, bool shifted) {
     return '\n';
 
   // Keyboard rows
-  if (y < WK_KB_Y) return 0;
+  if (y < WK_KB_Y)
+    return 0;
   int row = (y - WK_KB_Y) / WK_ROW_H;
-  if (row < 0 || row >= 5) return 0;
+  if (row < 0 || row >= 5)
+    return 0;
 
   // Row 4 special: merged keys
   if (row == 4) {
     int spaceEnd = WK_X0 + 7 * (WK_KEY_W + WK_GAP);
-    if (x < spaceEnd) return ' ';
+    if (x < spaceEnd)
+      return ' ';
     int qEnd = WK_X0 + 8 * (WK_KEY_W + WK_GAP);
-    if (x < qEnd) return shifted ? '/' : '?';
+    if (x < qEnd)
+      return shifted ? '/' : '?';
     return '\n'; // GO
   }
 
   int col = (x - WK_X0) / (WK_KEY_W + WK_GAP);
-  if (col < 0 || col >= 10) return 0;
+  if (col < 0 || col >= 10)
+    return 0;
 
   // Verify touch is within key (not in gap)
   int kx = WK_X0 + col * (WK_KEY_W + WK_GAP);
-  if (x > kx + WK_KEY_W) return 0;
+  if (x > kx + WK_KEY_W)
+    return 0;
   int ky = WK_KB_Y + row * WK_ROW_H;
-  if (y > ky + WK_KEY_H) return 0;
+  if (y > ky + WK_KEY_H)
+    return 0;
 
   return kbCharAt(row, col, shifted);
 }
@@ -826,11 +843,11 @@ void Display::_drawSessionScreen(bool firstFrame, float weight_g,
   if (firstFrame) {
     _gfx->fillScreen(COL_SESSION_BG);
     // Static separator
-    _gfx->drawFastHLine(0, SESS_HDR_H, 240, COL_DIMGREY);
+    _gfx->drawFastHLine(0, SESS_HDR_H, 800, COL_DIMGREY);
   }
 
   // ── Weight value (Font 4 × size 2, left, white) ──────────────────────────
-  _gfx->fillRect(0, 0, 195, SESS_HDR_H, COL_SESSION_BG);
+  _gfx->fillRect(0, 0, 500, SESS_HDR_H, COL_SESSION_BG);
 
   _gfx->setTextSize(2);
   _gfx->setTextColor(COL_WHITE, COL_SESSION_BG);
@@ -845,11 +862,12 @@ void Display::_drawSessionScreen(bool firstFrame, float weight_g,
   uint32_t secs = elapsed_ms / 1000;
   char elStr[12];
   snprintf(elStr, sizeof(elStr), "%02lu:%02lu", secs / 60, secs % 60);
-  _gfx->fillRect(196, 0, 44, SESS_HDR_H, COL_SESSION_BG);
+  _gfx->fillRect(600, 0, 200, SESS_HDR_H,
+                 COL_SESSION_BG); // clear top right to bounds
 
   _gfx->setTextColor(COL_LABEL, COL_SESSION_BG);
 
-  _gfx->setCursor(238, 18);
+  _gfx->setCursor(700, 18);
   _gfx->setTextSize(2);
   _gfx->print(elStr);
 
@@ -890,7 +908,7 @@ void Display::_drawSessionScreen(bool firstFrame, float weight_g,
   }
 
   // ── Axis labels ───────────────────────────────────────────────────────────
-  _gfx->fillRect(0, AXIS_Y, 240, 320 - AXIS_Y, COL_SESSION_BG);
+  _gfx->fillRect(0, AXIS_Y, 800, 480 - AXIS_Y, COL_SESSION_BG);
 
   _gfx->setTextColor(COL_LABEL, COL_SESSION_BG);
 
@@ -944,7 +962,7 @@ void Display::_drawTitle() {
   _gfx->setTextColor(COL_DIMGREY, COL_BG);
   _gfx->setCursor(10, TITLE_Y + 30);
   _gfx->print("v" FW_VERSION);
-  _gfx->drawLine(0, SEP_Y, 240, SEP_Y, COL_DIMGREY);
+  _gfx->drawLine(0, SEP_Y, 800, SEP_Y, COL_DIMGREY);
 }
 
 void Display::_drawLabel(int x, int y, const char *label, const char *value,
