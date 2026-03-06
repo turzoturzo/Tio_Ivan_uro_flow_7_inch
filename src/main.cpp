@@ -306,10 +306,10 @@ static bool bleExportAllCsv() {
 }
 
 static void enterBleExportMode() {
-  gDisplay.showBoot("BLE export:\nmount storage...");
+  ui_set_boot_status("BLE export:\nmount storage...", 0);
   Serial.println("[BLE-EXPORT] Enter mode");
   if (!FFat.begin(true)) {
-    gDisplay.showBoot("BLE export:\nFAT mount FAIL");
+    ui_set_boot_status("BLE export:\nFAT mount FAIL", 0);
     Serial.println("[BLE-EXPORT] ERROR: FFat.begin(true) failed");
     delay(5000);
     ESP.restart();
@@ -342,8 +342,9 @@ static void enterBleExportMode() {
     adv->start();
   }
 
-  gDisplay.showBoot("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
-                    "screen to export all CSV");
+  ui_set_boot_status("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
+                     "screen to export all CSV",
+                     0);
   Serial.println(
       "[BLE-EXPORT] Advertising as 'Logger'; tap screen to transfer");
 
@@ -353,7 +354,7 @@ static void enterBleExportMode() {
       sWifiProvisionRequested = false;
       int sep = sWifiProvisionPayload.indexOf('|');
       if (sep <= 0) {
-        gDisplay.showBoot("BLE export:\nBad WiFi payload");
+        ui_set_boot_status("BLE export:\nBad WiFi payload", 0);
         bleExportSendError("WIFI format: WIFI:ssid|password");
       } else {
         String ssid = sWifiProvisionPayload.substring(0, sep);
@@ -361,39 +362,41 @@ static void enterBleExportMode() {
         ssid.trim();
         pass.trim();
         if (ssid.length() == 0) {
-          gDisplay.showBoot("BLE export:\nSSID required");
+          ui_set_boot_status("BLE export:\nSSID required", 0);
           bleExportSendError("SSID required");
         } else {
           ensurePrefsOpen();
           if (!gPrefsOpen) {
-            gDisplay.showBoot("BLE export:\nNVS error");
+            ui_set_boot_status("BLE export:\nNVS error", 0);
             bleExportSendError("NVS open failed");
           } else {
             gPrefs.putString(NVS_KEY_WIFI_SSID, ssid);
             gPrefs.putString(NVS_KEY_WIFI_PASS, pass);
             Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssid.c_str());
-            gDisplay.showBoot("BLE export:\nSyncing time...");
+            ui_set_boot_status("BLE export:\nSyncing time...", 0);
             gTimeSynced =
                 syncTimeViaNtp(ssid.c_str(), pass.c_str(), WIFI_TIMEOUT_S);
             if (gTimeSynced) {
               bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_OK_TIME_SYNCED",
                                   19);
-              gDisplay.showBoot("BLE export:\nWiFi saved\nTime synced");
+              ui_set_boot_status("BLE export:\nWiFi saved\nTime synced", 0);
             } else {
               bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_SAVED_TIME_FAIL",
                                   20);
-              gDisplay.showBoot("BLE export:\nWiFi saved\nTime sync failed");
+              ui_set_boot_status("BLE export:\nWiFi saved\nTime sync failed",
+                                 0);
             }
           }
         }
       }
       delay(900);
-      gDisplay.showBoot("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
-                        "screen to export all CSV");
+      ui_set_boot_status("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
+                         "screen to export all CSV",
+                         0);
     }
 
     if (sExportClientConnected && sExportTransferRequested && !transferDone) {
-      gDisplay.showBoot("BLE export:\ntransferring all CSV...");
+      ui_set_boot_status("BLE export:\ntransferring all CSV...", 0);
       sExportTransferRequested = false;
       transferDone = bleExportAllCsv();
 
@@ -416,7 +419,7 @@ static void enterBleExportMode() {
           }
         }
 
-        gDisplay.showBleExportDeletePrompt(exportedCount);
+        ui_set_boot_status("Delete all exported CSV files?", 0);
         uint32_t promptStart = millis();
         while (millis() - promptStart < 15000) {
           int tx = 0, ty = 0;
@@ -447,7 +450,7 @@ static void enterBleExportMode() {
                 root.close();
               }
               Serial.printf("[BLE-EXPORT] Deleted %d CSV files\n", deleted);
-              gDisplay.showBleExportDeleted(deleted);
+              ui_set_boot_status("CSV Files Deleted", 100);
               delay(2000);
               FFat.end();
               ESP.restart();
@@ -457,15 +460,16 @@ static void enterBleExportMode() {
           }
           delay(40);
         }
-        gDisplay.showBoot("BLE export:\nDONE\nTap to exit");
+        ui_set_boot_status("BLE export:\nDONE\nTap to exit", 0);
       } else {
-        gDisplay.showBoot("BLE export:\nFAILED\nTap to exit");
+        ui_set_boot_status("BLE export:\nFAILED\nTap to exit", 0);
       }
     }
 
     if (consumeTouchPress()) {
       if (!sExportClientConnected) {
-        gDisplay.showBoot("BLE Export Ready\nWaiting for Mac connection...");
+        ui_set_boot_status("BLE Export Ready\nWaiting for Mac connection...",
+                           0);
         delay(500);
       } else if (!transferDone) {
         sExportTransferRequested = true;
@@ -496,110 +500,28 @@ static void enterWifiSetupMode() {
 
   int activeField = 0; // 0 = SSID, 1 = password
   bool shifted = false;
-  gDisplay.drawWifiKeyboard(ssidBuf, passBuf, activeField, shifted);
-  Serial.println("[WIFI-SETUP] On-screen keyboard active");
+  ui_set_boot_status("Use BLE to Setup WiFi", 0);
+  Serial.println(
+      "[WIFI-SETUP] On-screen keyboard DISABLED (Purging legacy UI)");
 
   while (true) {
     int tx, ty;
-    if (!gDisplay.getTouch(tx, ty)) {
-      delay(30);
-      continue;
-    }
-
-    // Debounce: wait for release
-    delay(80);
-    int dx, dy;
-    while (gDisplay.getTouch(dx, dy))
-      delay(20);
-
-    char key = gDisplay.mapWifiKeyTouch(tx, ty, shifted);
-    if (key == 0)
-      continue;
-
-    char *buf = (activeField == 0) ? ssidBuf : passBuf;
-    size_t maxLen = (activeField == 0) ? 32 : 63;
-    size_t len = strlen(buf);
-
-    switch (key) {
-    case 0x1B: // BACK
+    if (gDisplay.getTouch(tx, ty)) {
+      delay(80);
+      int dx, dy;
+      while (gDisplay.getTouch(dx, dy))
+        delay(20);
       ESP.restart();
-      return;
-
-    case 0x02: // tap SSID field
-      if (activeField != 0) {
-        activeField = 0;
-        gDisplay.updateWifiField(0, ssidBuf, true);
-        gDisplay.updateWifiField(1, passBuf, false);
-      }
-      break;
-
-    case 0x03: // tap password field
-      if (activeField != 1) {
-        activeField = 1;
-        gDisplay.updateWifiField(0, ssidBuf, false);
-        gDisplay.updateWifiField(1, passBuf, true);
-      }
-      break;
-
-    case 0x01: // SHIFT
-      shifted = !shifted;
-      gDisplay.drawWifiKeys(shifted);
-      break;
-
-    case '\b': // backspace
-      if (len > 0) {
-        buf[len - 1] = '\0';
-        gDisplay.updateWifiField(activeField, buf, true);
-      }
-      break;
-
-    case '\n': { // CONNECT / GO
-      if (strlen(ssidBuf) == 0) {
-        gDisplay.updateWifiStatus("SSID required!", 0xF800);
-        break;
-      }
-      // Save credentials
-      if (gPrefsOpen) {
-        gPrefs.putString(NVS_KEY_WIFI_SSID, ssidBuf);
-        gPrefs.putString(NVS_KEY_WIFI_PASS, passBuf);
-        Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssidBuf);
-      }
-      gDisplay.updateWifiStatus("Connecting...", 0xFFE0);
-      gTimeSynced = syncTimeViaNtp(ssidBuf, passBuf, WIFI_TIMEOUT_S);
-      if (gTimeSynced) {
-        gDisplay.updateWifiStatus("Time synced!", 0x07E0);
-        Serial.println("[WIFI-SETUP] Connected & time synced");
-      } else {
-        gDisplay.updateWifiStatus("Saved (no sync)", 0xFFE0);
-        Serial.println("[WIFI-SETUP] Saved but NTP sync failed");
-      }
-      delay(2000);
-      ESP.restart();
-      return;
     }
-
-    default: // printable character
-      if (len < maxLen) {
-        buf[len] = key;
-        buf[len + 1] = '\0';
-        gDisplay.updateWifiField(activeField, buf, true);
-        // Auto-disable shift after one character
-        if (shifted) {
-          shifted = false;
-          gDisplay.drawWifiKeys(shifted);
-        }
-      }
-      break;
-    }
-    delay(30);
+    delay(50);
   }
 }
 
 static bool prepareExportFs() {
-  gDisplay.showBoot("Export: mount FAT...");
+  ui_set_boot_status("Export: mount FAT...", 0);
   Serial.println("[Export] Mounting FFat");
   if (!FFat.begin(true)) {
-    gDisplay.showBoot("Export: FAT mount FAIL");
+    ui_set_boot_status("Export: FAT mount FAIL", 0);
     Serial.println("[Export] ERROR: FFat.begin(true) failed");
     return false;
   }
@@ -607,7 +529,7 @@ static bool prepareExportFs() {
   // Marker file proves the volume is valid even before any CSV session exists.
   File marker = FFat.open("/EXPORT_OK.TXT", FILE_WRITE);
   if (!marker) {
-    gDisplay.showBoot("Export: marker FAIL");
+    ui_set_boot_status("Export: marker FAIL", 0);
     Serial.println("[Export] ERROR: cannot create /EXPORT_OK.TXT");
     FFat.end();
     return false;
@@ -621,22 +543,22 @@ static bool prepareExportFs() {
 }
 
 static void enterExportMode() {
-  gDisplay.showBoot("Export: find FAT...");
+  ui_set_boot_status("Export: find FAT...", 0);
   Serial.println("[Export] Enter export mode");
 
   // Find the FAT partition by label (subtype = FAT in partitions_8MB.csv)
   sFatPartition = esp_partition_find_first(
       ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, "ffat");
   if (!sFatPartition) {
-    gDisplay.showBoot("No FAT partition!\nReflash device.");
+    ui_set_boot_status("No FAT partition!\nReflash device.", 0);
     delay(5000);
     ESP.restart();
     return;
   }
-  gDisplay.showBoot("Export: mount WL...");
+  ui_set_boot_status("Export: mount WL...", 0);
   esp_err_t err = wl_mount(sFatPartition, &sWlHandle);
   if (err != ESP_OK) {
-    gDisplay.showBoot("Export: WL mount FAIL");
+    ui_set_boot_status("Export: WL mount FAIL", 0);
     Serial.printf("[Export] ERROR: wl_mount failed (%d)\n", (int)err);
     delay(5000);
     ESP.restart();
@@ -645,7 +567,7 @@ static void enterExportMode() {
   sWlSize = wl_size(sWlHandle);
   sWlSectorSize = wl_sector_size(sWlHandle);
   if (sWlSize == 0 || sWlSectorSize == 0 || (sWlSize % 512u) != 0u) {
-    gDisplay.showBoot("Export: geometry FAIL");
+    ui_set_boot_status("Export: geometry FAIL", 0);
     Serial.printf("[Export] ERROR: bad geometry size=%lu sector=%lu\n",
                   (unsigned long)sWlSize, (unsigned long)sWlSectorSize);
     delay(5000);
@@ -655,7 +577,7 @@ static void enterExportMode() {
   }
   sMscWriteBuf = (uint8_t *)malloc(sWlSectorSize);
   if (!sMscWriteBuf) {
-    gDisplay.showBoot("No RAM for MSC!");
+    ui_set_boot_status("No RAM for MSC!", 0);
     delay(5000);
     teardownMscBackend();
     ESP.restart();
@@ -663,7 +585,7 @@ static void enterExportMode() {
   }
 
   // Configure and start USB MSC (enumerate before USB.begin())
-  gDisplay.showBoot("Export: start USB...");
+  ui_set_boot_status("Export: start USB...", 0);
   sMSC.vendorID("UroFlow");    // max 8 chars
   sMSC.productID("Logger");    // max 16 chars
   sMSC.productRevision("1.0"); // max 4 chars
@@ -673,7 +595,7 @@ static void enterExportMode() {
   sMSC.mediaPresent(true);
   bool mscOk = sMSC.begin(sWlSize / 512u, 512u);
   if (!mscOk) {
-    gDisplay.showBoot("Export: MSC begin FAIL");
+    ui_set_boot_status("Export: MSC begin FAIL", 0);
     Serial.println("[Export] ERROR: sMSC.begin failed");
     delay(5000);
     teardownMscBackend();
@@ -682,7 +604,7 @@ static void enterExportMode() {
   }
   bool usbOk = USB.begin();
   if (!usbOk) {
-    gDisplay.showBoot("Export: USB begin FAIL");
+    ui_set_boot_status("Export: USB begin FAIL", 0);
     Serial.println("[Export] ERROR: USB.begin failed");
     delay(5000);
     teardownMscBackend();
@@ -692,7 +614,7 @@ static void enterExportMode() {
   Serial.printf("[Export] USB MSC started, sectors=%lu\n",
                 (unsigned long)(sWlSize / 512u));
 
-  gDisplay.showMscMode();
+  ui_set_boot_status("USB DRIVE MODE\nConnect to PC/Mac", 0);
 
   // Wait: computer mounts drive, user copies files, tap screen to exit
   while (true) {
@@ -724,6 +646,28 @@ static AppState deriveState() {
   return gBle.isScanning() ? AppState::BLE_SCANNING : AppState::BLE_CONNECTING;
 }
 
+// ── UI Interaction Callbacks
+// ────────────────────────────────────────────────────────
+static void onUiHome() {
+  if (gSession.isActive()) {
+    Serial.println("[UI] Home clicked - Resetting");
+    gSession.reset();
+  } else if (gState == AppState::BOOT) {
+    Serial.println("[UI] Network card clicked - WiFi Setup");
+    enterWifiSetupMode();
+  }
+}
+
+static void onUiStart() {
+  if (gBle.isConnected() && gSession.state() == Session::State::IDLE) {
+    Serial.println("[UI] Start clicked - Forcing session");
+    gSession.forceStart();
+  } else if (gState == AppState::BOOT) {
+    Serial.println("[UI] Export card clicked - BLE Export");
+    enterBleExportMode();
+  }
+}
+
 // ── setup()
 // ───────────────────────────────────────────────────────────────────
 
@@ -741,6 +685,8 @@ void setup() {
 
   // ── Build Base LVGL UI ───────────────────────────────────────────────────
   ui_init();
+  ui_set_home_cb(onUiHome);
+  ui_set_start_cb(onUiStart);
   lv_timer_handler(); // Force an initial render pass
 
   // ── Initialise touch controller early (handled by Display::begin()) ──
@@ -750,11 +696,11 @@ void setup() {
   // true = format on first use (creates FAT filesystem on blank partition).
   ui_set_boot_status("Mounting storage...", 10);
   if (!FFat.begin(true)) {
-    ui_set_boot_status("Storage ERROR!\nReflash device.", 0);
+    ui_set_boot_status("Storage ERROR!", 0);
     Serial.println("[FS] FFat mount failed");
     while (true) {
       lv_timer_handler();
-      delay(100);
+      delay(10);
     }
   }
   Serial.printf("[FS] Free: %lu KB\n",
@@ -790,33 +736,27 @@ void setup() {
   // bleTimeSync_start();
 
   for (int remaining = 10; remaining >= 0; remaining--) {
-    char buf[64];
-    snprintf(buf, sizeof(buf), "Starting in %ds...", remaining);
-    ui_set_boot_status(buf, 100 - (remaining * 10));
+    ui_set_boot_status("System Ready", remaining);
     uint32_t tickStart = millis();
     while (millis() - tickStart < 1000) {
+      lv_timer_handler();
+      // Handle touch routing through LVGL/Display bridge
       int tx = 0, ty = 0;
       if (gDisplay.getTouch(tx, ty)) {
-        delay(120); // debounce
-        int dummyX, dummyY;
-        while (gDisplay.getTouch(dummyX, dummyY))
-          delay(30);
-
-        if (ty >= 105 && ty <= 180) {
-          // BLE EXPORT button (800x480 zone)
-          FFat.end(); // release before BLE export mode remounts
-          gDisplay.showBoot("Opening BLE export...");
-          delay(250);
-          enterBleExportMode(); // does not return
-          return;
-        } else if (ty >= 190 && ty <= 260) {
-          // WIFI SETUP button (800x480 zone)
+        // We can still use raw coordinates for these low-level system traps
+        if (ty >= 105 && ty <= 180) { // BLE EXPORT zone
           FFat.end();
-          enterWifiSetupMode(); // does not return
+          ui_set_boot_status("Export Mode...", 0);
+          enterBleExportMode();
+          return;
+        } else if (ty >= 190 && ty <= 260) { // WIFI SETUP zone
+          FFat.end();
+          ui_set_boot_status("WiFi Setup...", 0);
+          enterWifiSetupMode();
           return;
         }
       }
-      delay(50);
+      delay(20);
     }
     if (remaining == 0)
       break;
@@ -831,12 +771,12 @@ void setup() {
     String wifiPass;
     bool haveWifi = loadWifiCreds(wifiSsid, wifiPass);
     if (haveWifi) {
-      gDisplay.showBoot("Syncing time...");
+      ui_set_boot_status("Syncing time...", 0);
       gTimeSynced =
           syncTimeViaNtp(wifiSsid.c_str(), wifiPass.c_str(), WIFI_TIMEOUT_S);
-      gDisplay.showBoot(gTimeSynced ? "Time OK"
-                                    : "Time FAILED\n(sequential names)");
+      ui_set_boot_status(gTimeSynced ? "Time OK" : "Time FAILED", 0);
       delay(600);
+      lv_timer_handler();
     } else {
       Serial.println("[NTP] No WiFi credentials provisioned");
     }
@@ -852,7 +792,7 @@ void setup() {
   gSession.begin(gTimeSynced, seqNum);
 
   // ── BLE Acaia client init ────────────────────────────────────────────────
-  gDisplay.showBoot("Scanning for\nAcaia scale...");
+  ui_set_boot_status("Scanning...", 0);
   gBle.begin(onWeight, storedMac.length() >= 17 ? storedMac.c_str() : nullptr);
 
   gState = AppState::BLE_SCANNING;
@@ -875,6 +815,18 @@ void loop() {
   if (millis() - lastHeartbeat >= 1000) {
     lastHeartbeat = millis();
     Serial.print(".");
+
+    // Countdown for UI (as seen in screenshots)
+    static int boot_countdown = 10;
+    if (gSession.state() == Session::State::IDLE && !gBle.isConnected()) {
+      if (boot_countdown > 0)
+        boot_countdown--;
+      else
+        boot_countdown = 10; // Restart or stay at 0
+      ui_set_boot_status("Searching...", boot_countdown);
+    } else {
+      boot_countdown = 10;
+    }
   }
 
   lv_task_handler();
@@ -885,17 +837,17 @@ void loop() {
   // Update UI state based on system status
   if (gSession.state() == Session::State::UPLOAD) {
     ui_set_state(UIState::SYNCING);
-    // Note: upload is currently synchronous in Session::uploadToGoogleSheet
   } else if (gSession.isActive()) {
     ui_set_state(UIState::ACTIVE);
-    ui_update_weight(gSession.lastWeight(),
-                     (millis() - gSession.startTime()) / 1000);
+    static uint32_t lastWeightUpdate = 0;
+    if (millis() - lastWeightUpdate >= 200) {
+      lastWeightUpdate = millis();
+      ui_update_weight(gSession.cumulativeWeight(), gSession.elapsedSeconds());
+    }
   } else if (gBle.isConnected()) {
     ui_set_state(UIState::READY);
   } else {
-    // If not connected and not uploading, show searching/boot
     ui_set_state(UIState::BOOT);
-    ui_set_boot_status("Searching for scale...", 0);
   }
 
   // Persist MAC once connected

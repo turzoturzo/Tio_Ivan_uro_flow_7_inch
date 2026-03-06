@@ -22,3 +22,7 @@ void ui_set_state(UIState state);
 void ui_update_weight(float weight_g, uint32_t elapsed_s);
 void ui_set_boot_status(const char *status, int progress_pct);
 void ui_set_sync_status(const char *message, bool is_error);
+
+// Callback registration for interactions
+void ui_set_home_cb(void (*cb)());
+void ui_set_start_cb(void (*cb)());

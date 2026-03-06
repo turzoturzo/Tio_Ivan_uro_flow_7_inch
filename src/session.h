@@ -34,6 +34,13 @@ public:
     _lastSavedName = "";
   }
 
+  // Manually trigger a session start (Touch override)
+  void forceStart() {
+    if (_state == State::IDLE) {
+      _startSession();
+    }
+  }
+
   // Accessors for display
   State state() const { return _state; }
   bool isActive() const { return _state == State::ACTIVE; }
@@ -44,6 +51,8 @@ public:
   int weightRemovalCountdownSecs() const;
   uint32_t seqNum() const { return _seqNum; }
   String lastSavedName() const { return _lastSavedName; }
+  float cumulativeWeight() const { return _cumulativeWeight; }
+  uint32_t elapsedSeconds() const { return elapsedMs() / 1000; }
   int uploadToGoogleSheet(const String &path);
 
   // Accessors for post-session summary (valid when state() == ENDED)

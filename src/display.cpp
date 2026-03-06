@@ -163,19 +163,9 @@ void Display::begin() {
 #error "Unsupported RGB_PANEL_PROFILE"
 #endif
 
-  // Soft Start: Backlight stays OFF for now to save power during init
-  // Assuming CH422G_ADDR_WR with bit 0 controls backlight.
-  // 0x1E (00011110) would turn off bit 0, keeping others high.
-  // 0x1F (00011111) would turn on bit 0, keeping others high.
-  // This is a guess based on the user's provided values.
-  // Original code used 0xFF for backlight on, 0x00 for off.
-  // For safety, let's use 0xFE (all high except bit 0) for off, and 0xFF for
-  // on.
-  ch422g_write(CH422G_ADDR_WR, 0xFE); // Backlight LOW (assuming bit 0 is BL)
-
   Serial.printf("[DISPLAY] PSRAM Size: %ld KB\n",
                 (long)(ESP.getPsramSize() / 1024));
-  Serial.println("[DISPLAY] Starting RGB GFX (Soft Start)...");
+  Serial.println("[DISPLAY] Starting RGB GFX...");
 
   _gfx = new Arduino_RGB_Display(800, 480, rgbpanel, 0, false);
   yield();
@@ -186,17 +176,6 @@ void Display::begin() {
   }
   yield();
 
-  // Color probe
-  _gfx->fillScreen(0xF800); // Red
-
-  // NOW turn on backlight
-  ch422g_write(CH422G_ADDR_WR, 0xFF); // Backlight HIGH
-
-  delay(300);
-  _gfx->fillScreen(0x07E0); // Green
-  delay(300);
-  _gfx->fillScreen(0x001F); // Blue
-  delay(300);
   _gfx->fillScreen(COL_BG);
 
   // Re-initialize I2C after RGB panel init.
@@ -207,9 +186,20 @@ void Display::begin() {
   Wire.end();
   Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
 
-  _touch = new initGT911(&Wire, GT911_I2C_ADDR_BA);
+  _touch = new initGT911(&Wire, 0x5D); // Try 0x5D (GT911_I2C_ADDR_BA)
   if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {
-    Serial.println("GT911 init failed!");
+    Serial.println("GT911 init failed on 0x5D! Trying 0x14...");
+    delete _touch;
+    _touch = new initGT911(&Wire, 0x14); // Try 0x14 (GT911_I2C_ADDR_28)
+    if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {
+      Serial.println("GT911 init failed on 0x14 too! Touch is disabled.");
+      delete _touch;
+      _touch = nullptr;
+    } else {
+      Serial.println("GT911 init success on 0x14");
+    }
+  } else {
+    Serial.println("GT911 init success on 0x5D");
   }
 
   // ── LVGL Init ─────────────────────────────────────────────────────────────

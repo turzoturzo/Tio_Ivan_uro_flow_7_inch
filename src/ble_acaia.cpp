@@ -89,6 +89,11 @@ void BleAcaia::getLastMac(char *out_buf, size_t len) const {
 
 void BleAcaia::onResult(const NimBLEAdvertisedDevice *device) {
   std::string name = device->getName();
+  if (name.length() > 0) {
+    Serial.printf("[BLE] Found device: %s [%s]\n", name.c_str(),
+                  device->getAddress().toString().c_str());
+  }
+
   // Match first 5 chars against known Acaia scale name prefixes
   std::string prefix = name.substr(0, 5);
   for (auto &c : prefix)
@@ -97,7 +102,7 @@ void BleAcaia::onResult(const NimBLEAdvertisedDevice *device) {
   if (prefix == "ACAIA" || prefix == "PEARL" || prefix == "LUNAR" ||
       prefix == "PYXIS" || prefix == "CINCO" || prefix == "PROCH" ||
       prefix == "BOOKO") {
-    Serial.printf("[BLE] Found scale: %s [%s]\n", name.c_str(),
+    Serial.printf("[BLE] Found MATCHING scale: %s [%s]\n", name.c_str(),
                   device->getAddress().toString().c_str());
     NimBLEDevice::getScan()->stop();
     _targetAddr = device->getAddress();
