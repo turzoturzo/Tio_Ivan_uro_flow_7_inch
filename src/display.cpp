@@ -1,6 +1,6 @@
 #include "display.h"
 #include "config.h"
-#include "main.h" // AppState enum
+#include "main.h" // For AppState definitions
 #include <Arduino.h>
 #include <Arduino_DataBus.h>
 #include <Wire.h>
@@ -8,6 +8,29 @@
 #include <esp_heap_caps.h>
 #include <esp_lcd_panel_ops.h>
 #include <initGT911.h>
+#include <lvgl.h>
+
+// LVGL driver callbacks
+static void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area,
+                          lv_color_t *color_p) {
+  uint32_t w = (area->x2 - area->x1 + 1);
+  uint32_t h = (area->y2 - area->y1 + 1);
+  Arduino_GFX *gfx = (Arduino_GFX *)disp_drv->user_data;
+  gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)&color_p->full, w, h);
+  lv_disp_flush_ready(disp_drv);
+}
+
+static void my_touch_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
+  Display *disp = (Display *)indev_drv->user_data;
+  int x, y;
+  if (disp->getTouch(x, y)) {
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = x;
+    data->point.y = y;
+  } else {
+    data->state = LV_INDEV_STATE_REL;
+  }
+}
 
 // ── Display ──────────────────────────────────────────────────────────
 // We use the stock Arduino_RGB_Display. The previous 'FixedRGBDisplay' hack
@@ -189,8 +212,39 @@ void Display::begin() {
     Serial.println("GT911 init failed!");
   }
 
-  _drawTitle();
-  _gfx->flush();
+  // ── LVGL Init ─────────────────────────────────────────────────────────────
+  lv_init();
+
+  // Draw buffer in PSRAM (e.g. 1/10th of screen size = 800 * 48 * 2 bytes =
+  // ~76KB)
+  size_t buf_size = 800 * 48;
+  lv_color_t *buf = (lv_color_t *)heap_caps_malloc(
+      buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  if (!buf) {
+    Serial.println("[LVGL] PSRAM allocation failed! Falling back to SRAM");
+    buf = (lv_color_t *)malloc(buf_size * sizeof(lv_color_t));
+  }
+
+  static lv_disp_draw_buf_t draw_buf;
+  lv_disp_draw_buf_init(&draw_buf, buf, NULL, buf_size);
+
+  static lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+  disp_drv.hor_res = 800;
+  disp_drv.ver_res = 480;
+  disp_drv.flush_cb = my_disp_flush;
+  disp_drv.draw_buf = &draw_buf;
+  disp_drv.user_data = _gfx;
+  lv_disp_drv_register(&disp_drv);
+
+  static lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  indev_drv.read_cb = my_touch_read;
+  indev_drv.user_data = this;
+  lv_indev_drv_register(&indev_drv);
+
+  Serial.println("[LVGL] Initialization complete");
 }
 
 bool Display::getTouch(int &x, int &y) {

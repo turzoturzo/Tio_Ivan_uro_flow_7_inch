@@ -4,9 +4,11 @@
 #include <Preferences.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include <esp_partition.h>
 #include <esp_sleep.h>
+#include <lvgl.h>
 #include <wear_levelling.h>
 
 #include "ble_acaia.h"
@@ -125,11 +127,13 @@ static volatile bool sWifiProvisionRequested = false;
 static String sWifiProvisionPayload = "";
 
 class ExportServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer * /*server*/, NimBLEConnInfo & /*connInfo*/) override {
+  void onConnect(NimBLEServer * /*server*/,
+                 NimBLEConnInfo & /*connInfo*/) override {
     sExportClientConnected = true;
     Serial.println("[BLE-EXPORT] Client connected");
   }
-  void onDisconnect(NimBLEServer *server, NimBLEConnInfo & /*connInfo*/, int /*reason*/) override {
+  void onDisconnect(NimBLEServer *server, NimBLEConnInfo & /*connInfo*/,
+                    int /*reason*/) override {
     sExportClientConnected = false;
     sExportTransferRequested = false;
     Serial.println("[BLE-EXPORT] Client disconnected");
@@ -138,7 +142,8 @@ class ExportServerCallbacks : public NimBLEServerCallbacks {
 };
 
 class ExportRxCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *chr, NimBLEConnInfo & /*connInfo*/) override {
+  void onWrite(NimBLECharacteristic *chr,
+               NimBLEConnInfo & /*connInfo*/) override {
     std::string raw = chr->getValue();
     String cmd(raw.c_str());
     String upper = cmd;
@@ -500,85 +505,87 @@ static void enterWifiSetupMode() {
     // Debounce: wait for release
     delay(80);
     int dx, dy;
-    while (gDisplay.getTouch(dx, dy)) delay(20);
+    while (gDisplay.getTouch(dx, dy))
+      delay(20);
 
     char key = gDisplay.mapWifiKeyTouch(tx, ty, shifted);
-    if (key == 0) continue;
+    if (key == 0)
+      continue;
 
     char *buf = (activeField == 0) ? ssidBuf : passBuf;
     size_t maxLen = (activeField == 0) ? 32 : 63;
     size_t len = strlen(buf);
 
     switch (key) {
-      case 0x1B: // BACK
-        ESP.restart();
-        return;
+    case 0x1B: // BACK
+      ESP.restart();
+      return;
 
-      case 0x02: // tap SSID field
-        if (activeField != 0) {
-          activeField = 0;
-          gDisplay.updateWifiField(0, ssidBuf, true);
-          gDisplay.updateWifiField(1, passBuf, false);
-        }
-        break;
-
-      case 0x03: // tap password field
-        if (activeField != 1) {
-          activeField = 1;
-          gDisplay.updateWifiField(0, ssidBuf, false);
-          gDisplay.updateWifiField(1, passBuf, true);
-        }
-        break;
-
-      case 0x01: // SHIFT
-        shifted = !shifted;
-        gDisplay.drawWifiKeys(shifted);
-        break;
-
-      case '\b': // backspace
-        if (len > 0) {
-          buf[len - 1] = '\0';
-          gDisplay.updateWifiField(activeField, buf, true);
-        }
-        break;
-
-      case '\n': { // CONNECT / GO
-        if (strlen(ssidBuf) == 0) {
-          gDisplay.updateWifiStatus("SSID required!", 0xF800);
-          break;
-        }
-        // Save credentials
-        if (gPrefsOpen) {
-          gPrefs.putString(NVS_KEY_WIFI_SSID, ssidBuf);
-          gPrefs.putString(NVS_KEY_WIFI_PASS, passBuf);
-          Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssidBuf);
-        }
-        gDisplay.updateWifiStatus("Connecting...", 0xFFE0);
-        gTimeSynced = syncTimeViaNtp(ssidBuf, passBuf, WIFI_TIMEOUT_S);
-        if (gTimeSynced) {
-          gDisplay.updateWifiStatus("Time synced!", 0x07E0);
-          Serial.println("[WIFI-SETUP] Connected & time synced");
-        } else {
-          gDisplay.updateWifiStatus("Saved (no sync)", 0xFFE0);
-          Serial.println("[WIFI-SETUP] Saved but NTP sync failed");
-        }
-        delay(2000);
-        ESP.restart();
-        return;
+    case 0x02: // tap SSID field
+      if (activeField != 0) {
+        activeField = 0;
+        gDisplay.updateWifiField(0, ssidBuf, true);
+        gDisplay.updateWifiField(1, passBuf, false);
       }
+      break;
 
-      default: // printable character
-        if (len < maxLen) {
-          buf[len] = key;
-          buf[len + 1] = '\0';
-          gDisplay.updateWifiField(activeField, buf, true);
-          // Auto-disable shift after one character
-          if (shifted) {
-            shifted = false;
-            gDisplay.drawWifiKeys(shifted);
-          }
-        }
+    case 0x03: // tap password field
+      if (activeField != 1) {
+        activeField = 1;
+        gDisplay.updateWifiField(0, ssidBuf, false);
+        gDisplay.updateWifiField(1, passBuf, true);
+      }
+      break;
+
+    case 0x01: // SHIFT
+      shifted = !shifted;
+      gDisplay.drawWifiKeys(shifted);
+      break;
+
+    case '\b': // backspace
+      if (len > 0) {
+        buf[len - 1] = '\0';
+        gDisplay.updateWifiField(activeField, buf, true);
+      }
+      break;
+
+    case '\n': { // CONNECT / GO
+      if (strlen(ssidBuf) == 0) {
+        gDisplay.updateWifiStatus("SSID required!", 0xF800);
         break;
+      }
+      // Save credentials
+      if (gPrefsOpen) {
+        gPrefs.putString(NVS_KEY_WIFI_SSID, ssidBuf);
+        gPrefs.putString(NVS_KEY_WIFI_PASS, passBuf);
+        Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssidBuf);
+      }
+      gDisplay.updateWifiStatus("Connecting...", 0xFFE0);
+      gTimeSynced = syncTimeViaNtp(ssidBuf, passBuf, WIFI_TIMEOUT_S);
+      if (gTimeSynced) {
+        gDisplay.updateWifiStatus("Time synced!", 0x07E0);
+        Serial.println("[WIFI-SETUP] Connected & time synced");
+      } else {
+        gDisplay.updateWifiStatus("Saved (no sync)", 0xFFE0);
+        Serial.println("[WIFI-SETUP] Saved but NTP sync failed");
+      }
+      delay(2000);
+      ESP.restart();
+      return;
+    }
+
+    default: // printable character
+      if (len < maxLen) {
+        buf[len] = key;
+        buf[len + 1] = '\0';
+        gDisplay.updateWifiField(activeField, buf, true);
+        // Auto-disable shift after one character
+        if (shifted) {
+          shifted = false;
+          gDisplay.drawWifiKeys(shifted);
+        }
+      }
+      break;
     }
     delay(30);
   }
@@ -728,6 +735,30 @@ void setup() {
   // ── Display init (SPI, no USB dependency) ────────────────────────────────
   gDisplay.begin();
 
+  // ── Build Base LVGL Test Screen ───────────────────────────────────────────
+  lv_obj_t *bg = lv_obj_create(lv_scr_act());
+  lv_obj_set_size(bg, 800, 480);
+  lv_obj_set_style_bg_color(bg, lv_color_hex(0x1a1a1a), 0);
+
+  lv_obj_t *lbl = lv_label_create(bg);
+  lv_label_set_text(lbl, "UroFlow LVGL Base UI Active");
+  lv_obj_align(lbl, LV_ALIGN_TOP_MID, 0, 20);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
+
+  lv_obj_t *chart = lv_chart_create(bg);
+  lv_obj_set_size(chart, 600, 300);
+  lv_obj_align(chart, LV_ALIGN_CENTER, 0, 20);
+  lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
+  lv_chart_series_t *ser = lv_chart_add_series(
+      chart, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
+  lv_chart_set_next_value(chart, ser, 10);
+  lv_chart_set_next_value(chart, ser, 50);
+  lv_chart_set_next_value(chart, ser, 30);
+  lv_chart_set_next_value(chart, ser, 90);
+
+  lv_timer_handler(); // Force an initial render pass
+
   // ── Initialise touch controller early (handled by Display::begin()) ──
 
   // ── FFat: mount early so we can show file count on boot screen ───────────
@@ -846,6 +877,8 @@ void setup() {
 // ────────────────────────────────────────────────────────────────────
 
 void loop() {
+  lv_task_handler();
+
   gBle.tick();
   gSession.tick();
 
@@ -939,12 +972,8 @@ void loop() {
 
   if (millis() - gLastDisplayMs >= DISPLAY_INTERVAL_MS) {
     gLastDisplayMs = millis();
-    gDisplay.update(gState, gSession.lastWeight(), gSession.isActive(),
-                    gSession.elapsedMs(), gSession.rowCount(), gTimeSynced,
-                    gSession.chartData(), gSession.chartCount(),
-                    gSession.chartHead(),
-                    gSession.weightRemovalCountdownSecs());
+    // Legacy display primitive drawing disabled — LVGL now owns the screen
   }
 
-  delay(10);
+  delay(5);
 }
