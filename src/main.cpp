@@ -33,6 +33,12 @@ static bool gPrefsOpen = false;
 static uint32_t gLastDisplayMs = 0;
 static const uint32_t DISPLAY_INTERVAL_MS = 200; // 5 Hz
 
+// LVGL UI Pointers
+static lv_obj_t *main_chart = nullptr;
+static lv_chart_series_t *main_ser = nullptr;
+static lv_obj_t *main_label = nullptr;
+static lv_obj_t *bg_panel = nullptr;
+
 // Touch handling is now managed by gDisplay using the GT911 driver.
 
 // ── USB MSC export mode
@@ -746,16 +752,16 @@ void setup() {
   lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_text_font(lbl, &lv_font_montserrat_24, 0);
 
-  lv_obj_t *chart = lv_chart_create(bg);
-  lv_obj_set_size(chart, 600, 300);
-  lv_obj_align(chart, LV_ALIGN_CENTER, 0, 20);
-  lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
-  lv_chart_series_t *ser = lv_chart_add_series(
-      chart, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
-  lv_chart_set_next_value(chart, ser, 10);
-  lv_chart_set_next_value(chart, ser, 50);
-  lv_chart_set_next_value(chart, ser, 30);
-  lv_chart_set_next_value(chart, ser, 90);
+  main_chart = lv_chart_create(bg);
+  lv_obj_set_size(main_chart, 600, 300);
+  lv_obj_align(main_chart, LV_ALIGN_CENTER, 0, 20);
+  lv_chart_set_type(main_chart, LV_CHART_TYPE_LINE);
+  lv_chart_set_range(main_chart, LV_CHART_AXIS_PRIMARY_Y, 0,
+                     1000); // 0-1kg range
+  lv_chart_set_point_count(main_chart, CHART_BUF_SIZE);
+  main_ser = lv_chart_add_series(main_chart, lv_palette_main(LV_PALETTE_BLUE),
+                                 LV_CHART_AXIS_PRIMARY_Y);
+  lv_chart_set_next_value(main_chart, main_ser, 0);
 
   lv_timer_handler(); // Force an initial render pass
 
@@ -876,8 +882,6 @@ void setup() {
 // ── loop()
 // ────────────────────────────────────────────────────────────────────
 
-static lv_obj_t *bg_panel = nullptr;
-
 static void restart_btn_cb(lv_event_t *e) {
   if (bg_panel) {
     lv_obj_del(bg_panel);
@@ -887,10 +891,31 @@ static void restart_btn_cb(lv_event_t *e) {
 }
 
 void loop() {
+  static uint32_t lastHeartbeat = 0;
+  if (millis() - lastHeartbeat >= 1000) {
+    lastHeartbeat = millis();
+    Serial.print(".");
+  }
+
   lv_task_handler();
 
   gBle.tick();
   gSession.tick();
+
+  // 1. Sync Session data to LVGL UI if active
+  if (gSession.isActive() && main_chart && main_ser) {
+    static uint32_t lastChartUpdate = 0;
+    if (millis() - lastChartUpdate >= 100) { // Update UI at 10Hz
+      lastChartUpdate = millis();
+
+      // Sync the most recent weight to the chart
+      // Note: For a more accurate "rolling" chart, we could sync the whole
+      // buffer, but for now, just pushing the latest point is sufficient for
+      // LVGL's scrolling.
+      lv_chart_set_next_value(main_chart, main_ser,
+                              (lv_coord_t)gSession.lastWeight());
+    }
+  }
 
   // ── Post-session: upload and wait for restart ─────────────────────
   // We use LVGL to render an opaque overlay.

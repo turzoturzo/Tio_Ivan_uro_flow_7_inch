@@ -2,6 +2,7 @@
 #include "chart_types.h"
 #include <Arduino.h>
 #include <FFat.h>
+#include <atomic>
 #include <time.h>
 
 class Session {
@@ -57,6 +58,7 @@ private:
   void _flushBuffer();
   void _writeHeader();
   String _buildFilename() const;
+  void _processWeight(float weight_g, uint32_t t_ms_abs);
 
   State _state;
   uint32_t _sessionStartMs;
@@ -81,6 +83,11 @@ private:
   // Captured at session end — valid when state() == ENDED
   uint32_t _endedRowCount;
   uint32_t _endedDurationMs;
+
+  // Thread-safe weight transfer
+  std::atomic<float> _pendingWeight{0.0f};
+  std::atomic<uint32_t> _pendingTime{0};
+  std::atomic<bool> _newWeightPending{false};
 
   // In-memory chart ring buffer (for live display only, not persisted)
   ChartSample _chart[CHART_BUF_SIZE];

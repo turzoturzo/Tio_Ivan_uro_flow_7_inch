@@ -24,76 +24,21 @@ void Session::begin(bool hasRealTime, uint32_t seqNum) {
   }
 }
 
-void Session::onWeight(float weight_g, uint32_t /*t_ms_abs*/) {
-  _lastWeight = weight_g;
-  _lastWeightMs = millis();
-
-  if (_state == State::IDLE) {
-    // Start logging only when a meaningful weight is placed on the scale.
-    // This avoids noise/near-zero packets starting a session immediately.
-    if (weight_g >= WEIGHT_REMOVAL_THRESHOLD_G) {
-      _startSession();
-    } else {
-      return;
-    }
-  }
-
-  if (_state != State::ACTIVE)
-    return;
-
-  // Track weight-removal: if reading is below the "empty scale" threshold,
-  // record when it first went below; reset timer when weight returns above it.
-  if (weight_g < WEIGHT_REMOVAL_THRESHOLD_G) {
-    if (_weightBelowThresholdMs == 0 &&
-        _cumulativeWeight > WEIGHT_REMOVAL_THRESHOLD_G)
-      _weightBelowThresholdMs = millis();
-  } else {
-    _weightBelowThresholdMs = 0;
-    // Tracking cumulative weight by summing positive deltas since the last
-    // sample. This is robust to container taring/removal mid-session.
-    float delta = weight_g - _prevRawWeight;
-    if (delta > 0.05f) { // 50mg noise floor
-      _cumulativeWeight += delta;
-    }
-  }
-  _prevRawWeight = weight_g;
-
-  uint32_t t_ms = millis() - _sessionStartMs;
-
-  // Append to chart ring buffer
-  int slot = (_chartHead + _chartCount) % CHART_BUF_SIZE;
-  if (_chartCount < CHART_BUF_SIZE) {
-    _chartCount++;
-  } else {
-    // Buffer full — advance head (overwrites oldest)
-    _chartHead = (_chartHead + 1) % CHART_BUF_SIZE;
-  }
-  _chart[slot].t_ms = t_ms;
-  _chart[slot].weight_g = weight_g;
-
-  // Build CSV row: t_ms since session start, UTC timestamp, weight, event
-  char ts[32] = "";
-  if (_hasRealTime && _sessionStartEpoch > 0) {
-    time_t rowEpoch = _sessionStartEpoch + (time_t)(t_ms / 1000UL);
-    struct tm tmUtc;
-    gmtime_r(&rowEpoch, &tmUtc);
-    snprintf(ts, sizeof(ts), "%04d-%02d-%02dT%02d:%02d:%02dZ",
-             tmUtc.tm_year + 1900, tmUtc.tm_mon + 1, tmUtc.tm_mday,
-             tmUtc.tm_hour, tmUtc.tm_min, tmUtc.tm_sec);
-  }
-  char row[96];
-  snprintf(row, sizeof(row), "%lu,%s,%.1f,%.1f,\n", (unsigned long)t_ms, ts,
-           weight_g, _cumulativeWeight);
-  _writeBuf += row;
-  _rowCount++;
-
-  // Flush every LOG_FLUSH_INTERVAL_MS
-  if (millis() - _lastFlushMs >= LOG_FLUSH_INTERVAL_MS) {
-    _flushBuffer();
-  }
+void Session::onWeight(float weight_g, uint32_t t_ms_abs) {
+  _pendingWeight = weight_g;
+  _pendingTime = t_ms_abs;
+  _newWeightPending = true;
 }
 
 void Session::tick() {
+  // 1. Process pending weight from BLE task (safe context)
+  if (_newWeightPending) {
+    float w = _pendingWeight.load();
+    uint32_t t = _pendingTime.load();
+    _newWeightPending = false;
+    _processWeight(w, t);
+  }
+
   if (_state != State::ACTIVE)
     return;
 
@@ -110,6 +55,67 @@ void Session::tick() {
     Serial.println("[Session] Weight removed — ending session");
     _endSession();
     return;
+  }
+}
+
+void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
+  _lastWeight = weight_g;
+  _lastWeightMs = millis();
+
+  if (_state == State::IDLE) {
+    if (weight_g >= WEIGHT_REMOVAL_THRESHOLD_G) {
+      _startSession();
+    } else {
+      return;
+    }
+  }
+
+  if (_state != State::ACTIVE)
+    return;
+
+  if (weight_g < WEIGHT_REMOVAL_THRESHOLD_G) {
+    if (_weightBelowThresholdMs == 0 &&
+        _cumulativeWeight > WEIGHT_REMOVAL_THRESHOLD_G)
+      _weightBelowThresholdMs = millis();
+  } else {
+    _weightBelowThresholdMs = 0;
+    float delta = weight_g - _prevRawWeight;
+    if (delta > 0.05f) {
+      _cumulativeWeight += delta;
+    }
+  }
+  _prevRawWeight = weight_g;
+
+  uint32_t t_ms = millis() - _sessionStartMs;
+
+  // Append to chart ring buffer
+  int slot = (_chartHead + _chartCount) % CHART_BUF_SIZE;
+  if (_chartCount < CHART_BUF_SIZE) {
+    _chartCount++;
+  } else {
+    _chartHead = (_chartHead + 1) % CHART_BUF_SIZE;
+  }
+  _chart[slot].t_ms = t_ms;
+  _chart[slot].weight_g = weight_g;
+
+  // Build CSV row
+  char ts[32] = "";
+  if (_hasRealTime && _sessionStartEpoch > 0) {
+    time_t rowEpoch = _sessionStartEpoch + (time_t)(t_ms / 1000UL);
+    struct tm tmUtc;
+    gmtime_r(&rowEpoch, &tmUtc);
+    snprintf(ts, sizeof(ts), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+             tmUtc.tm_year + 1900, tmUtc.tm_mon + 1, tmUtc.tm_mday,
+             tmUtc.tm_hour, tmUtc.tm_min, tmUtc.tm_sec);
+  }
+  char row[96];
+  snprintf(row, sizeof(row), "%lu,%s,%.1f,%.1f,\n", (unsigned long)t_ms, ts,
+           weight_g, _cumulativeWeight);
+  _writeBuf += row;
+  _rowCount++;
+
+  if (millis() - _lastFlushMs >= LOG_FLUSH_INTERVAL_MS) {
+    _flushBuffer();
   }
 }
 

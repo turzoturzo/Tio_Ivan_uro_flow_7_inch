@@ -3,9 +3,9 @@
 This file tracks the current goals for the UroFlow 7-Inch project.
 
 ## 🔴 High Priority (Immediate)
-- **Visual UI Redesign**: Transition from code-generated LVGL widgets to specialized SquareLine Studio exports for a premium look.
-- **Legacy Cleanup**: Remove remaining `_gfx->draw...` calls from `display.cpp` that are superseded by LVGL.
-- **WiFi Hardening**: Improve reconnection logic when `uploadToGoogleSheet` fails due to network flux.
+- **Fix BLE Panic**: Resolve the `LoadProhibited` crash occurring during scale connection/disconnection.
+- **Lovable UI Redesign**: Implement the "Industrial Cyberpunk" theme from milli-flow-tale.lovable.app.
+- **Visual UI Refinement**: Transition from code-generated LVGL widgets to specialized SquareLine Studio exports for a premium look.
 
 ## 🟡 Medium Priority
 - **NVM Settings**: Persist display settings (brightness, theme) in NVS.
