@@ -585,6 +585,9 @@ void Display::drawWifiKeyboard(const char *ssid, const char *pass,
   // BACK button (top-right)
   _gfx->fillRoundRect(700, 5, 90, 35, 8, COL_DIMGREY);
   drawKeyLabel(_gfx, 700, 5, 90, 35, "BACK", COL_WHITE, COL_DIMGREY);
+  // SCAN button (next to BACK)
+  _gfx->fillRoundRect(600, 5, 90, 35, 8, COL_BTN_BLUE);
+  drawKeyLabel(_gfx, 600, 5, 90, 35, "SCAN", COL_WHITE, COL_BTN_BLUE);
 
   // Field labels
   _gfx->setTextColor(COL_LABEL, COL_BG);
@@ -697,6 +700,9 @@ char Display::mapWifiKeyTouch(int x, int y, bool shifted) {
   // BACK button
   if (y >= 5 && y < 40 && x >= 700)
     return 0x1B;
+  // SCAN button
+  if (y >= 5 && y < 40 && x >= 600 && x < 690)
+    return 0x04;
 
   // SSID field
   if (y >= WK_SSID_Y && y < WK_SSID_Y + WK_FIELD_H && x >= WK_FIELD_X)

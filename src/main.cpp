@@ -486,11 +486,40 @@ static void enterBleExportMode() {
 // ────────────────────────────── User types SSID and password directly on the
 // touchscreen using a full QWERTY keyboard.  No BLE needed.
 
+static volatile bool sWifiUiDone = false;
+static volatile bool sWifiUiScanRequested = false;
+static volatile bool sWifiUiConnectRequested = false;
+static lv_obj_t *sWifiKeyboard = nullptr;
+static lv_obj_t *sWifiSsidTa = nullptr;
+static lv_obj_t *sWifiPassTa = nullptr;
+static lv_obj_t *sWifiStatusLabel = nullptr;
+
+static void wifi_ta_focus_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) != LV_EVENT_FOCUSED || !sWifiKeyboard)
+    return;
+  lv_obj_t *ta = lv_event_get_target(e);
+  lv_keyboard_set_textarea(sWifiKeyboard, ta);
+}
+
+static void wifi_btn_scan_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    sWifiUiScanRequested = true;
+}
+
+static void wifi_btn_connect_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    sWifiUiConnectRequested = true;
+}
+
+static void wifi_btn_cancel_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    sWifiUiDone = true;
+}
+
 static void enterWifiSetupMode() {
   ensurePrefsOpen();
-  // Pre-fill from NVS if credentials already exist
-  char ssidBuf[64] = {};
-  char passBuf[64] = {};
+  char ssidBuf[64] = {0};
+  char passBuf[64] = {0};
   if (gPrefsOpen) {
     String s = gPrefs.getString(NVS_KEY_WIFI_SSID, "");
     String p = gPrefs.getString(NVS_KEY_WIFI_PASS, "");
@@ -498,23 +527,172 @@ static void enterWifiSetupMode() {
     strlcpy(passBuf, p.c_str(), sizeof(passBuf));
   }
 
-  int activeField = 0; // 0 = SSID, 1 = password
-  bool shifted = false;
-  ui_set_boot_status("Use BLE to Setup WiFi", 0);
-  Serial.println(
-      "[WIFI-SETUP] On-screen keyboard DISABLED (Purging legacy UI)");
+  Serial.println("[WIFI-SETUP] Entering LVGL WiFi modal");
 
-  while (true) {
-    int tx, ty;
-    if (gDisplay.getTouch(tx, ty)) {
-      delay(80);
-      int dx, dy;
-      while (gDisplay.getTouch(dx, dy))
-        delay(20);
-      ESP.restart();
+  sWifiUiDone = false;
+  sWifiUiScanRequested = false;
+  sWifiUiConnectRequested = false;
+
+  lv_obj_t *modal = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(modal, 760, 440);
+  lv_obj_center(modal);
+  lv_obj_set_style_bg_color(modal, lv_color_hex(0x0F0F0F), 0);
+  lv_obj_set_style_bg_opa(modal, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(modal, lv_color_hex(0x2A2A2A), 0);
+  lv_obj_set_style_border_width(modal, 1, 0);
+  lv_obj_set_style_radius(modal, 4, 0);
+
+  lv_obj_t *title = lv_label_create(modal);
+  lv_label_set_text(title, "WiFi Setup");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
+  lv_obj_set_style_text_color(title, lv_color_hex(0xF2F2F2), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 16, 10);
+
+  lv_obj_t *ssidLbl = lv_label_create(modal);
+  lv_label_set_text(ssidLbl, "SSID");
+  lv_obj_set_style_text_color(ssidLbl, lv_color_hex(0x808080), 0);
+  lv_obj_align(ssidLbl, LV_ALIGN_TOP_LEFT, 18, 62);
+
+  sWifiSsidTa = lv_textarea_create(modal);
+  lv_obj_set_size(sWifiSsidTa, 724, 44);
+  lv_obj_align(sWifiSsidTa, LV_ALIGN_TOP_LEFT, 18, 82);
+  lv_textarea_set_one_line(sWifiSsidTa, true);
+  lv_textarea_set_text(sWifiSsidTa, ssidBuf);
+  lv_obj_add_event_cb(sWifiSsidTa, wifi_ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+  lv_obj_t *passLbl = lv_label_create(modal);
+  lv_label_set_text(passLbl, "Password");
+  lv_obj_set_style_text_color(passLbl, lv_color_hex(0x808080), 0);
+  lv_obj_align(passLbl, LV_ALIGN_TOP_LEFT, 18, 136);
+
+  sWifiPassTa = lv_textarea_create(modal);
+  lv_obj_set_size(sWifiPassTa, 724, 44);
+  lv_obj_align(sWifiPassTa, LV_ALIGN_TOP_LEFT, 18, 156);
+  lv_textarea_set_one_line(sWifiPassTa, true);
+  lv_textarea_set_password_mode(sWifiPassTa, true);
+  lv_textarea_set_text(sWifiPassTa, passBuf);
+  lv_obj_add_event_cb(sWifiPassTa, wifi_ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+  lv_obj_t *btnScan = lv_btn_create(modal);
+  lv_obj_set_size(btnScan, 120, 38);
+  lv_obj_align(btnScan, LV_ALIGN_TOP_LEFT, 18, 212);
+  lv_obj_add_event_cb(btnScan, wifi_btn_scan_cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *btnScanLbl = lv_label_create(btnScan);
+  lv_label_set_text(btnScanLbl, "SCAN");
+  lv_obj_center(btnScanLbl);
+
+  lv_obj_t *btnConnect = lv_btn_create(modal);
+  lv_obj_set_size(btnConnect, 160, 38);
+  lv_obj_align(btnConnect, LV_ALIGN_TOP_LEFT, 150, 212);
+  lv_obj_set_style_bg_color(btnConnect, lv_color_hex(UI_COLOR_GREEN), 0);
+  lv_obj_set_style_text_color(btnConnect, lv_color_hex(0x0A0A0A), 0);
+  lv_obj_add_event_cb(btnConnect, wifi_btn_connect_cb, LV_EVENT_CLICKED,
+                      nullptr);
+  lv_obj_t *btnConnLbl = lv_label_create(btnConnect);
+  lv_label_set_text(btnConnLbl, "CONNECT");
+  lv_obj_center(btnConnLbl);
+
+  lv_obj_t *btnCancel = lv_btn_create(modal);
+  lv_obj_set_size(btnCancel, 120, 38);
+  lv_obj_align(btnCancel, LV_ALIGN_TOP_LEFT, 322, 212);
+  lv_obj_add_event_cb(btnCancel, wifi_btn_cancel_cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *btnCancelLbl = lv_label_create(btnCancel);
+  lv_label_set_text(btnCancelLbl, "CANCEL");
+  lv_obj_center(btnCancelLbl);
+
+  sWifiStatusLabel = lv_label_create(modal);
+  lv_label_set_text(sWifiStatusLabel, "Tap SCAN to find WiFi, then CONNECT");
+  lv_obj_set_style_text_color(sWifiStatusLabel, lv_color_hex(0x808080), 0);
+  lv_obj_set_width(sWifiStatusLabel, 724);
+  lv_obj_align(sWifiStatusLabel, LV_ALIGN_TOP_LEFT, 18, 260);
+
+  sWifiKeyboard = lv_keyboard_create(modal);
+  lv_obj_set_size(sWifiKeyboard, 724, 156);
+  lv_obj_align(sWifiKeyboard, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_keyboard_set_textarea(sWifiKeyboard, sWifiSsidTa);
+
+  bool success = false;
+  while (!sWifiUiDone) {
+    lv_timer_handler();
+
+    if (sWifiUiScanRequested) {
+      sWifiUiScanRequested = false;
+      lv_label_set_text(sWifiStatusLabel, "Scanning...");
+      lv_timer_handler();
+
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_STA);
+      WiFi.persistent(false);
+      int n = WiFi.scanNetworks();
+      if (n <= 0) {
+        lv_label_set_text(sWifiStatusLabel, "No networks found");
+      } else {
+        int best = 0;
+        for (int i = 1; i < n; i++) {
+          if (WiFi.RSSI(i) > WiFi.RSSI(best))
+            best = i;
+        }
+        String bestSsid = WiFi.SSID(best);
+        lv_textarea_set_text(sWifiSsidTa, bestSsid.c_str());
+        char msg[96];
+        snprintf(msg, sizeof(msg), "Found %d networks; selected strongest", n);
+        lv_label_set_text(sWifiStatusLabel, msg);
+      }
+      WiFi.scanDelete();
     }
-    delay(50);
+
+    if (sWifiUiConnectRequested) {
+      sWifiUiConnectRequested = false;
+      const char *ssid = lv_textarea_get_text(sWifiSsidTa);
+      const char *pass = lv_textarea_get_text(sWifiPassTa);
+      if (!ssid || strlen(ssid) == 0) {
+        lv_label_set_text(sWifiStatusLabel, "SSID is required");
+      } else {
+        lv_label_set_text(sWifiStatusLabel, "Connecting...");
+        lv_timer_handler();
+
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_STA);
+        WiFi.persistent(false);
+        WiFi.begin(ssid, pass);
+
+        uint32_t deadline = millis() + (uint32_t)WIFI_TIMEOUT_S * 1000UL;
+        while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
+          lv_timer_handler();
+          delay(100);
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
+          if (gPrefsOpen) {
+            gPrefs.putString(NVS_KEY_WIFI_SSID, ssid);
+            gPrefs.putString(NVS_KEY_WIFI_PASS, pass);
+          }
+          ui_set_boot_network(ssid);
+          bool synced = syncTimeViaNtp(ssid, pass, WIFI_TIMEOUT_S);
+          lv_label_set_text(sWifiStatusLabel,
+                            synced ? "Saved + time synced"
+                                   : "Saved (time sync failed)");
+          success = true;
+          sWifiUiDone = true;
+        } else {
+          lv_label_set_text(sWifiStatusLabel, "Connection failed");
+          WiFi.disconnect(true);
+          WiFi.mode(WIFI_OFF);
+        }
+      }
+    }
+
+    delay(20);
   }
+
+  lv_obj_del(modal);
+  sWifiKeyboard = nullptr;
+  sWifiSsidTa = nullptr;
+  sWifiPassTa = nullptr;
+  sWifiStatusLabel = nullptr;
+  ui_set_state(UIState::BOOT);
+  if (success)
+    delay(250);
 }
 
 static bool prepareExportFs() {
@@ -652,6 +830,10 @@ static void onUiHome() {
   if (gSession.isActive()) {
     Serial.println("[UI] Home clicked - Resetting");
     gSession.reset();
+  } else if (gSession.state() == Session::State::ENDED ||
+             gSession.state() == Session::State::WAITING) {
+    Serial.println("[UI] Home clicked - Acknowledge ended session");
+    gSession.reset();
   } else if (gState == AppState::BOOT) {
     Serial.println("[UI] Network card clicked - WiFi Setup");
     enterWifiSetupMode();
@@ -729,6 +911,12 @@ void setup() {
   ensurePrefsOpen();
   String storedWifiSsid =
       gPrefsOpen ? gPrefs.getString(NVS_KEY_WIFI_SSID, "") : "";
+  if (storedWifiSsid.length() == 0 && strcmp(WIFI_SSID, "YourWiFiSSID") != 0) {
+    storedWifiSsid = WIFI_SSID;
+  }
+  if (storedWifiSsid.length() > 0) {
+    ui_set_boot_network(storedWifiSsid.c_str());
+  }
 
   // ── Boot countdown (10 seconds) ───────────────────────────────────────────
   // NOTE: bleTimeSync_start/stop temporarily disabled — dual-role NimBLE
@@ -815,18 +1003,6 @@ void loop() {
   if (millis() - lastHeartbeat >= 1000) {
     lastHeartbeat = millis();
     Serial.print(".");
-
-    // Countdown for UI (as seen in screenshots)
-    static int boot_countdown = 10;
-    if (gSession.state() == Session::State::IDLE && !gBle.isConnected()) {
-      if (boot_countdown > 0)
-        boot_countdown--;
-      else
-        boot_countdown = 10; // Restart or stay at 0
-      ui_set_boot_status("Searching...", boot_countdown);
-    } else {
-      boot_countdown = 10;
-    }
   }
 
   lv_task_handler();
@@ -834,17 +1010,45 @@ void loop() {
   gBle.tick();
   gSession.tick();
 
+  // One-shot welcome countdown: BOOT -> READY preview.
+  static uint32_t bootTickMs = 0;
+  static int bootCountdown = 10;
+  static bool bootIntroDone = false;
+  if (!bootIntroDone && !gBle.isConnected() &&
+      gSession.state() == Session::State::IDLE) {
+    uint32_t now = millis();
+    if (now - bootTickMs >= 1000) {
+      bootTickMs = now;
+      if (bootCountdown > 0) {
+        bootCountdown--;
+      }
+      if (bootCountdown == 0) {
+        bootIntroDone = true;
+      }
+    }
+    ui_set_boot_status("Searching...", bootCountdown);
+  } else if (gBle.isConnected()) {
+    bootIntroDone = true;
+  } else if (!bootIntroDone) {
+    bootTickMs = millis();
+  }
+
   // Update UI state based on system status
   if (gSession.state() == Session::State::UPLOAD) {
     ui_set_state(UIState::SYNCING);
+  } else if (gSession.state() == Session::State::ENDED ||
+             gSession.state() == Session::State::WAITING) {
+    ui_set_state(UIState::SUCCESS);
   } else if (gSession.isActive()) {
     ui_set_state(UIState::ACTIVE);
     static uint32_t lastWeightUpdate = 0;
     if (millis() - lastWeightUpdate >= 200) {
       lastWeightUpdate = millis();
-      ui_update_weight(gSession.cumulativeWeight(), gSession.elapsedSeconds());
+      ui_update_weight(gSession.cumulativeWeight(), gSession.elapsedSeconds(),
+                       gSession.weightRemovalCountdownSecs(),
+                       (uint32_t)gSession.chartCount());
     }
-  } else if (gBle.isConnected()) {
+  } else if (gBle.isConnected() || bootIntroDone) {
     ui_set_state(UIState::READY);
   } else {
     ui_set_state(UIState::BOOT);

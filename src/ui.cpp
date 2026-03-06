@@ -1,106 +1,179 @@
 #include "ui.h"
 #include "chart_types.h"
-#include "config.h"
 #include <Arduino.h>
+#include <stdio.h>
+#include <string.h>
+
+LV_FONT_DECLARE(space_grotesk_48);
+LV_FONT_DECLARE(space_grotesk_24);
+LV_FONT_DECLARE(jetbrains_mono_14);
 
 static lv_obj_t *main_screen = nullptr;
-static lv_obj_t *header_label = nullptr;
+static UIState current_ui_state = (UIState)-1;
+
+// Shared refs
+static lv_obj_t *status_label = nullptr;
+
+// Boot refs
+static lv_obj_t *boot_title_label = nullptr;
+static lv_obj_t *boot_count_label = nullptr;
+static lv_obj_t *boot_bar = nullptr;
+static lv_obj_t *boot_wifi_value = nullptr;
+
+// Active refs
 static lv_obj_t *weight_label = nullptr;
 static lv_obj_t *time_label = nullptr;
+static lv_obj_t *points_label = nullptr;
 static lv_obj_t *chart = nullptr;
 static lv_chart_series_t *ser = nullptr;
-static lv_obj_t *status_label = nullptr;
-static lv_obj_t *boot_title_label = nullptr;
-static lv_obj_t *boot_bar = nullptr;
-static lv_obj_t *sync_panel = nullptr;
+static lv_obj_t *end_overlay = nullptr;
+static lv_obj_t *end_count_label = nullptr;
 
-static UIState current_ui_state = (UIState)-1;
+// Success refs
+static lv_obj_t *success_count_label = nullptr;
+static lv_obj_t *success_bar = nullptr;
 
 // Callbacks for main.cpp to handle
 static void (*on_home_clicked)() = nullptr;
 static void (*on_start_clicked)() = nullptr;
 
+static char s_boot_wifi[64] = "MONGOFLO-LAB-5G";
+
+static void clear_refs() {
+  status_label = nullptr;
+  boot_title_label = nullptr;
+  boot_count_label = nullptr;
+  boot_bar = nullptr;
+  boot_wifi_value = nullptr;
+
+  weight_label = nullptr;
+  time_label = nullptr;
+  points_label = nullptr;
+  chart = nullptr;
+  ser = nullptr;
+  end_overlay = nullptr;
+  end_count_label = nullptr;
+
+  success_count_label = nullptr;
+  success_bar = nullptr;
+}
+
+static void style_surface(lv_obj_t *obj, lv_color_t bg, lv_color_t border) {
+  lv_obj_set_style_bg_color(obj, bg, 0);
+  lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(obj, border, 0);
+  lv_obj_set_style_border_width(obj, 1, 0);
+  lv_obj_set_style_radius(obj, 4, 0);
+  lv_obj_set_style_pad_all(obj, 16, 0);
+}
+
+static void apply_mono_style(lv_obj_t *obj, lv_color_t color) {
+  lv_obj_set_style_text_font(obj, &jetbrains_mono_14, 0);
+  lv_obj_set_style_text_color(obj, color, 0);
+  lv_obj_set_style_text_letter_space(obj, 4, 0);
+}
+
+static lv_obj_t *create_logo(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
+                             const lv_font_t *font) {
+  lv_obj_t *row = lv_obj_create(parent);
+  lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(row, 0, 0);
+  lv_obj_set_style_pad_all(row, 0, 0);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(row, 0, 0);
+
+  lv_obj_t *m = lv_label_create(row);
+  lv_label_set_text(m, "Mongo");
+  lv_obj_set_style_text_color(m, lv_color_hex(UI_COLOR_WHITE), 0);
+  lv_obj_set_style_text_font(m, font, 0);
+
+  lv_obj_t *f = lv_label_create(row);
+  lv_label_set_text(f, "Flo");
+  lv_obj_set_style_text_color(f, lv_color_hex(UI_COLOR_GREEN), 0);
+  lv_obj_set_style_text_font(f, font, 0);
+
+  lv_obj_align(row, LV_ALIGN_TOP_LEFT, x, y);
+  return row;
+}
+
 static void event_handler(lv_event_t *e) {
-  lv_event_code_t code = lv_event_get_code(e);
-  if (code == LV_EVENT_CLICKED) {
-    lv_obj_t *obj = lv_event_get_target(e);
-    if (on_home_clicked && lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_1)) {
-      on_home_clicked();
-    } else if (on_start_clicked && lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_2)) {
-      on_start_clicked();
-    }
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED)
+    return;
+
+  lv_obj_t *obj = lv_event_get_target(e);
+  if (on_home_clicked && lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_1)) {
+    on_home_clicked();
+  } else if (on_start_clicked && lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_2)) {
+    on_start_clicked();
   }
 }
 
-// Helper to create the branded "MongoFlo" logo
-static void create_logo(lv_obj_t *parent) {
-  lv_obj_t *cont = lv_obj_create(parent);
-  lv_obj_set_size(cont, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-  lv_obj_set_style_bg_opa(cont, 0, 0);
-  lv_obj_set_style_border_width(cont, 0, 0);
-  lv_obj_set_style_pad_all(cont, 0, 0);
-  lv_obj_set_flex_flow(cont, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(cont, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                        LV_FLEX_ALIGN_CENTER);
-
-  lv_obj_t *l1 = lv_label_create(cont);
-  lv_label_set_text(l1, "Mongo");
-  lv_obj_set_style_text_color(l1, lv_color_hex(UI_COLOR_WHITE), 0);
-  lv_obj_set_style_text_font(l1, &lv_font_montserrat_48, 0); // Bolder/Larger
-
-  lv_obj_t *l2 = lv_label_create(cont);
-  lv_label_set_text(l2, "Flo");
-  lv_obj_set_style_text_color(l2, lv_color_hex(UI_COLOR_GREEN), 0);
-  lv_obj_set_style_text_font(l2, &lv_font_montserrat_48, 0);
-
-  lv_obj_t *sub = lv_label_create(parent);
-  lv_label_set_text(sub, "FLOW RATE LOGGER V2.1");
-  lv_obj_set_style_text_color(sub, lv_color_hex(0x666666), 0);
-  lv_obj_set_style_text_font(sub, &lv_font_montserrat_14, 0);
-  lv_obj_align(sub, LV_ALIGN_TOP_LEFT, 20, 65);
-
-  lv_obj_align(cont, LV_ALIGN_TOP_LEFT, 20, 20);
-}
-
-// Helper to create a card
-static lv_obj_t *create_card(lv_obj_t *parent, int w, int h, const char *title,
-                             const char *val, const char *symbol) {
+static lv_obj_t *create_metric_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y,
+                                    const char *title, const char *value,
+                                    const char *symbol,
+                                    lv_obj_t **out_value_label) {
   lv_obj_t *card = lv_obj_create(parent);
-  lv_obj_set_size(card, w, h);
-  lv_obj_set_style_bg_color(card, lv_color_hex(0x111111), 0);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x222222), 0);
-  lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_radius(card, 4, 0);
-  lv_obj_set_style_pad_all(card, 15, 0);
+  lv_obj_set_size(card, 350, 108);
+  style_surface(card, lv_color_hex(UI_COLOR_CARD), lv_color_hex(UI_COLOR_GRAY));
+  lv_obj_align(card, LV_ALIGN_TOP_LEFT, x, y);
 
-  if (symbol) {
-    lv_obj_t *icon_box = lv_obj_create(card);
-    lv_obj_set_size(icon_box, 40, 40);
-    lv_obj_set_style_bg_color(icon_box, lv_color_hex(0x1a1a1a), 0);
-    lv_obj_set_style_border_width(icon_box, 0, 0);
-    lv_obj_set_style_radius(icon_box, 4, 0);
-    lv_obj_t *icon = lv_label_create(icon_box);
-    lv_label_set_text(icon, symbol);
-    lv_obj_set_style_text_color(icon, lv_color_hex(UI_COLOR_GREEN), 0);
-    lv_obj_center(icon);
+  lv_obj_t *icon_bg = lv_obj_create(card);
+  lv_obj_set_size(icon_bg, 40, 40);
+  lv_obj_set_style_radius(icon_bg, 4, 0);
+  lv_obj_set_style_border_width(icon_bg, 0, 0);
+  lv_obj_set_style_bg_color(icon_bg, lv_color_hex(0x1A1A1A), 0);
+  lv_obj_set_style_bg_opa(icon_bg, LV_OPA_COVER, 0);
+  lv_obj_align(icon_bg, LV_ALIGN_LEFT_MID, 0, 0);
+
+  lv_obj_t *icon = lv_label_create(icon_bg);
+  lv_label_set_text(icon, symbol);
+  lv_obj_set_style_text_color(icon, lv_color_hex(UI_COLOR_GREEN), 0);
+  lv_obj_set_style_text_font(icon, &lv_font_montserrat_24, 0);
+  lv_obj_center(icon);
+
+  lv_obj_t *t = lv_label_create(card);
+  lv_label_set_text(t, title);
+  apply_mono_style(t, lv_color_hex(UI_COLOR_MUTED));
+  lv_obj_align(t, LV_ALIGN_TOP_LEFT, 54, 8);
+
+  lv_obj_t *v = lv_label_create(card);
+  lv_label_set_text(v, value);
+  lv_obj_set_style_text_color(v, lv_color_hex(UI_COLOR_WHITE), 0);
+  lv_obj_set_style_text_font(v, &space_grotesk_24, 0);
+  lv_obj_set_width(v, 160);
+  lv_label_set_long_mode(v, LV_LABEL_LONG_DOT);
+  lv_obj_align(v, LV_ALIGN_TOP_LEFT, 54, 34);
+  if (out_value_label) {
+    *out_value_label = v;
   }
 
-  lv_obj_t *t_lbl = lv_label_create(card);
-  lv_label_set_text(t_lbl, title);
-  lv_obj_set_style_text_color(t_lbl, lv_color_hex(0x888888), 0);
-  lv_obj_set_style_text_font(t_lbl, &lv_font_montserrat_14, 0);
-  lv_obj_align(t_lbl, LV_ALIGN_TOP_LEFT, 55, 0);
+  // Right-side affordances to match reference: a CTA button on WiFi card,
+  // and a chevron on export card.
+  if (strcmp(title, "CURRENT NETWORK") == 0) {
+    lv_obj_t *btn = lv_obj_create(card);
+    lv_obj_set_size(btn, 118, 44);
+    lv_obj_set_style_radius(btn, 2, 0);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A1A1F), 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_align(btn, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_USER_1);
+    lv_obj_add_event_cb(btn, event_handler, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *txt = lv_label_create(btn);
+    lv_label_set_text(txt, "CHANGE WIFI");
+    apply_mono_style(txt, lv_color_hex(UI_COLOR_MUTED));
+    lv_obj_center(txt);
+  } else if (strcmp(title, "DATA EXPORT") == 0) {
+    lv_obj_t *chev = lv_label_create(card);
+    lv_label_set_text(chev, LV_SYMBOL_RIGHT);
+    lv_obj_set_style_text_font(chev, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_color(chev, lv_color_hex(UI_COLOR_MUTED), 0);
+    lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -14, 0);
+  }
 
-  lv_obj_t *v_lbl = lv_label_create(card);
-  lv_label_set_text(v_lbl, val);
-  lv_obj_set_style_text_color(v_lbl, lv_color_hex(UI_COLOR_WHITE), 0);
-  lv_obj_set_style_text_font(v_lbl, &lv_font_montserrat_24, 0);
-  lv_obj_align(v_lbl, LV_ALIGN_TOP_LEFT, 55, 20);
-
-  // Add a clickable surface or button to the card
   lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(card, event_handler, LV_EVENT_CLICKED, nullptr);
-
   return card;
 }
 
@@ -108,8 +181,6 @@ void ui_init() {
   main_screen = lv_scr_act();
   lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_BLACK), 0);
   lv_obj_set_style_bg_opa(main_screen, LV_OPA_COVER, 0);
-
-  // Initial state: Boot
   ui_set_state(UIState::BOOT);
 }
 
@@ -118,259 +189,397 @@ void ui_set_state(UIState state) {
     return;
   current_ui_state = state;
 
-  // Clean up current screen
   lv_obj_clean(main_screen);
+  clear_refs();
 
   switch (state) {
   case UIState::BOOT: {
     lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_BLACK), 0);
 
-    create_logo(main_screen);
+    create_logo(main_screen, 20, 18, &space_grotesk_48);
+
+    lv_obj_t *tag = lv_label_create(main_screen);
+    lv_label_set_text(tag, "FLOW RATE LOGGER V2.1");
+    apply_mono_style(tag, lv_color_hex(UI_COLOR_MUTED));
+    lv_obj_align(tag, LV_ALIGN_TOP_LEFT, 20, 72);
 
     lv_obj_t *ready = lv_label_create(main_screen);
-    lv_label_set_text(ready, "● SYSTEM READY");
-    lv_obj_set_style_text_color(ready, lv_color_hex(0x888888), 0);
-    lv_obj_align(ready, LV_ALIGN_TOP_RIGHT, -20, 30);
+    lv_label_set_text(ready, "SYSTEM READY");
+    apply_mono_style(ready, lv_color_hex(UI_COLOR_MUTED));
+    lv_obj_align(ready, LV_ALIGN_TOP_RIGHT, -24, 30);
 
-    // Left Cards
-    lv_obj_t *wifi_card = create_card(main_screen, 340, 110, "CURRENT NETWORK",
-                                      "MONGOFLO-LAB-5G", LV_SYMBOL_WIFI);
-    lv_obj_align(wifi_card, LV_ALIGN_TOP_LEFT, 20, 140);
+    lv_obj_t *dot = lv_obj_create(main_screen);
+    lv_obj_set_size(dot, 8, 8);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(UI_COLOR_GREEN), 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(dot, 0, 0);
+    lv_obj_align(dot, LV_ALIGN_TOP_RIGHT, -140, 35);
+
+    lv_obj_t *wifi_card = create_metric_card(main_screen, 20, 116,
+                                             "CURRENT NETWORK", s_boot_wifi,
+                                             LV_SYMBOL_WIFI, &boot_wifi_value);
     lv_obj_add_flag(wifi_card, LV_OBJ_FLAG_USER_1);
 
-    lv_obj_t *export_card =
-        create_card(main_screen, 340, 110, "DATA EXPORT",
-                    "Export Files Manually", LV_SYMBOL_DOWNLOAD);
-    lv_obj_align(export_card, LV_ALIGN_TOP_LEFT, 20, 260);
+    lv_obj_t *export_card = create_metric_card(main_screen, 20, 238,
+                                               "DATA EXPORT",
+                                               "Export Files Manually",
+                                               LV_SYMBOL_DOWNLOAD, nullptr);
     lv_obj_add_flag(export_card, LV_OBJ_FLAG_USER_2);
 
-    // Right Connection Box
-    lv_obj_t *conn_box = lv_obj_create(main_screen);
-    lv_obj_set_size(conn_box, 380, 420);
-    lv_obj_set_style_bg_opa(conn_box, 0, 0);
-    lv_obj_set_style_border_color(conn_box, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_border_width(conn_box, 1, 0);
-    lv_obj_align(conn_box, LV_ALIGN_TOP_RIGHT, -20, 140);
+    lv_obj_t *countdown = lv_obj_create(main_screen);
+    lv_obj_set_size(countdown, 390, 320);
+    style_surface(countdown, lv_color_hex(UI_COLOR_CARD),
+                  lv_color_hex(UI_COLOR_GRAY));
+    lv_obj_align(countdown, LV_ALIGN_TOP_RIGHT, -20, 116);
 
-    boot_title_label = lv_label_create(conn_box);
+    boot_title_label = lv_label_create(countdown);
     lv_label_set_text(boot_title_label, "CONNECTING TO SCALE");
-    lv_obj_set_style_text_color(boot_title_label, lv_color_hex(0x888888), 0);
-    lv_obj_align(boot_title_label, LV_ALIGN_TOP_MID, 0, 80);
+    apply_mono_style(boot_title_label, lv_color_hex(UI_COLOR_MUTED));
+    lv_obj_align(boot_title_label, LV_ALIGN_TOP_MID, 0, 26);
 
-    status_label = lv_label_create(conn_box);
-    lv_label_set_text(status_label, "5");
-    lv_obj_set_style_text_color(status_label, lv_color_hex(UI_COLOR_GREEN), 0);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_48,
-                               0); // Need even larger?
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_48, 0);
-    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 0);
+    boot_count_label = lv_label_create(countdown);
+    lv_label_set_text(boot_count_label, "10");
+    lv_obj_set_style_text_color(boot_count_label, lv_color_hex(UI_COLOR_GREEN),
+                                0);
+    lv_obj_set_style_text_font(boot_count_label, &lv_font_montserrat_48, 0);
+    lv_obj_align(boot_count_label, LV_ALIGN_CENTER, 0, -6);
 
-    // Progress bar
-    lv_obj_t *bar = lv_bar_create(conn_box);
-    lv_obj_set_size(bar, 300, 4);
-    lv_bar_set_value(bar, 60, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(UI_COLOR_GREEN),
+    lv_obj_t *sec = lv_label_create(countdown);
+    lv_label_set_text(sec, "SECONDS");
+    apply_mono_style(sec, lv_color_hex(UI_COLOR_MUTED));
+    lv_obj_align(sec, LV_ALIGN_CENTER, 0, 56);
+
+    boot_bar = lv_bar_create(countdown);
+    lv_obj_set_size(boot_bar, 300, 6);
+    lv_bar_set_range(boot_bar, 0, 100);
+    lv_bar_set_value(boot_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(boot_bar, lv_color_hex(UI_COLOR_GRAY),
+                              LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(boot_bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(boot_bar, lv_color_hex(UI_COLOR_GREEN),
                               LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0x222222), LV_PART_MAIN);
-    lv_obj_align(bar, LV_ALIGN_BOTTOM_MID, 0, -80);
+    lv_obj_set_style_bg_opa(boot_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_align(boot_bar, LV_ALIGN_BOTTOM_MID, 0, -30);
 
-    // Footer
     lv_obj_t *f1 = lv_label_create(main_screen);
     lv_label_set_text(f1, "ESP32-S3 • LVGL 8.3 • 800x480");
-    lv_obj_set_style_text_color(f1, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_text_font(f1, &lv_font_montserrat_14, 0);
+    apply_mono_style(f1, lv_color_hex(0x5A5A5A));
     lv_obj_align(f1, LV_ALIGN_BOTTOM_LEFT, 20, -10);
 
     lv_obj_t *f2 = lv_label_create(main_screen);
     lv_label_set_text(f2, "© 2026 MongoFlo Instruments");
-    lv_obj_set_style_text_color(f2, lv_color_hex(0x444444), 0);
-    lv_obj_set_style_text_font(f2, &lv_font_montserrat_14, 0);
+    apply_mono_style(f2, lv_color_hex(0x5A5A5A));
     lv_obj_align(f2, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
-  } break;
+    break;
+  }
 
   case UIState::READY: {
-    // Full Screen Green (Cyberpunk)
-    lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x00E660), 0);
+    lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_GREEN), 0);
 
-    // Home Icon Placeholder (Top Left)
-    lv_obj_t *home = lv_label_create(main_screen);
+    lv_obj_t *tap_layer = lv_btn_create(main_screen);
+    lv_obj_set_size(tap_layer, 800, 480);
+    lv_obj_set_style_bg_opa(tap_layer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(tap_layer, 0, 0);
+    lv_obj_set_style_shadow_width(tap_layer, 0, 0);
+    lv_obj_align(tap_layer, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(tap_layer, LV_OBJ_FLAG_USER_2);
+    lv_obj_add_event_cb(tap_layer, event_handler, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *home_btn = lv_btn_create(main_screen);
+    lv_obj_set_size(home_btn, 44, 44);
+    lv_obj_set_style_radius(home_btn, 4, 0);
+    lv_obj_set_style_bg_color(home_btn, lv_color_hex(0x11B851), 0);
+    lv_obj_set_style_border_width(home_btn, 0, 0);
+    lv_obj_align(home_btn, LV_ALIGN_TOP_LEFT, 20, 20);
+    lv_obj_add_flag(home_btn, LV_OBJ_FLAG_USER_1);
+    lv_obj_add_event_cb(home_btn, event_handler, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t *home = lv_label_create(home_btn);
     lv_label_set_text(home, LV_SYMBOL_HOME);
     lv_obj_set_style_text_color(home, lv_color_hex(UI_COLOR_BLACK), 0);
-    lv_obj_align(home, LV_ALIGN_TOP_LEFT, 20, 20);
-    lv_obj_add_flag(home, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(home, LV_OBJ_FLAG_USER_1);
-    lv_obj_add_event_cb(home, event_handler, LV_EVENT_CLICKED, nullptr);
+    lv_obj_center(home);
 
-    // Make whole screen clickable to start
-    lv_obj_add_flag(main_screen, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(main_screen, LV_OBJ_FLAG_USER_2);
-    lv_obj_add_event_cb(main_screen, event_handler, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *outer = lv_obj_create(main_screen);
+    lv_obj_set_size(outer, 96, 96);
+    lv_obj_set_style_radius(outer, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(outer, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(outer, lv_color_hex(0x11B851), 0);
+    lv_obj_set_style_border_width(outer, 4, 0);
+    lv_obj_set_style_shadow_width(outer, 0, 0);
+    lv_obj_align(outer, LV_ALIGN_CENTER, 0, -120);
+
+    lv_obj_t *inner = lv_obj_create(outer);
+    lv_obj_set_size(inner, 40, 40);
+    lv_obj_set_style_radius(inner, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(inner, lv_color_hex(UI_COLOR_BLACK), 0);
+    lv_obj_set_style_border_width(inner, 0, 0);
+    lv_obj_center(inner);
 
     status_label = lv_label_create(main_screen);
     lv_label_set_text(status_label, "Scale Connected");
-    lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(UI_COLOR_BLACK), 0);
     lv_obj_set_style_text_font(status_label, &lv_font_montserrat_48, 0);
-    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -40);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(UI_COLOR_BLACK), 0);
+    lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -20);
 
     lv_obj_t *sub = lv_label_create(main_screen);
     lv_label_set_text(sub, "Add Weight to Scale to Start");
-    lv_obj_set_style_text_color(sub, lv_color_hex(UI_COLOR_BLACK), 0);
     lv_obj_set_style_text_font(sub, &lv_font_montserrat_32, 0);
-    lv_obj_align(sub, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_set_style_text_color(sub, lv_color_hex(0x13351F), 0);
+    lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(sub, LV_ALIGN_CENTER, 0, 48);
 
     lv_obj_t *tap = lv_label_create(main_screen);
     lv_label_set_text(tap, "TAP ANYWHERE TO START");
-    lv_obj_set_style_text_color(tap, lv_color_hex(0x222222), 0);
     lv_obj_set_style_text_font(tap, &lv_font_montserrat_14, 0);
-    lv_obj_align(tap, LV_ALIGN_BOTTOM_MID, 0, -60);
-  } break;
+    lv_obj_set_style_text_color(tap, lv_color_hex(0x1D4E2D), 0);
+    lv_obj_align(tap, LV_ALIGN_BOTTOM_MID, 0, -62);
+
+    lv_obj_t *f1 = lv_label_create(main_screen);
+    lv_label_set_text(f1, "MongoFlo • Ready");
+    lv_obj_set_style_text_color(f1, lv_color_hex(0x1D4E2D), 0);
+    lv_obj_set_style_text_font(f1, &lv_font_montserrat_14, 0);
+    lv_obj_align(f1, LV_ALIGN_BOTTOM_LEFT, 20, -10);
+
+    lv_obj_t *f2 = lv_label_create(main_screen);
+    lv_label_set_text(f2, "SCALE ONLINE");
+    lv_obj_set_style_text_color(f2, lv_color_hex(0x1D4E2D), 0);
+    lv_obj_set_style_text_font(f2, &lv_font_montserrat_14, 0);
+    lv_obj_align(f2, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
+    break;
+  }
 
   case UIState::ACTIVE: {
     lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_BLACK), 0);
 
-    // Header
-    create_logo(main_screen);
+    lv_obj_t *home_btn = lv_btn_create(main_screen);
+    lv_obj_set_size(home_btn, 34, 34);
+    lv_obj_set_style_radius(home_btn, 4, 0);
+    lv_obj_set_style_bg_color(home_btn, lv_color_hex(UI_COLOR_CARD), 0);
+    lv_obj_set_style_border_color(home_btn, lv_color_hex(UI_COLOR_GRAY), 0);
+    lv_obj_set_style_border_width(home_btn, 1, 0);
+    lv_obj_align(home_btn, LV_ALIGN_TOP_LEFT, 12, 10);
+    lv_obj_add_flag(home_btn, LV_OBJ_FLAG_USER_1);
+    lv_obj_add_event_cb(home_btn, event_handler, LV_EVENT_CLICKED, nullptr);
 
-    header_label = lv_label_create(main_screen);
-    lv_label_set_text(header_label, "●  RECORDING");
-    lv_obj_set_style_text_color(header_label, lv_color_hex(UI_COLOR_GREEN), 0);
-    lv_obj_align(header_label, LV_ALIGN_TOP_MID, 0, 30);
-
-    // Home button in ACTIVE state too
-    lv_obj_t *home = lv_label_create(main_screen);
+    lv_obj_t *home = lv_label_create(home_btn);
     lv_label_set_text(home, LV_SYMBOL_HOME);
-    lv_obj_set_style_text_color(home, lv_color_hex(0x444444), 0);
-    lv_obj_align(home, LV_ALIGN_TOP_LEFT, 20, 20);
-    lv_obj_add_flag(home, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(home, LV_OBJ_FLAG_USER_1);
-    lv_obj_add_event_cb(home, event_handler, LV_EVENT_CLICKED, nullptr);
+    lv_obj_set_style_text_color(home, lv_color_hex(UI_COLOR_MUTED), 0);
+    lv_obj_center(home);
 
-    // Metrics Container (Top Right)
-    lv_obj_t *metrics_cont = lv_obj_create(main_screen);
-    lv_obj_set_size(metrics_cont, 300, 100);
-    lv_obj_set_style_bg_opa(metrics_cont, 0, 0);
-    lv_obj_set_style_border_width(metrics_cont, 0, 0);
-    lv_obj_align(metrics_cont, LV_ALIGN_TOP_RIGHT, -20, 10);
+    create_logo(main_screen, 56, 8, &lv_font_montserrat_24);
 
-    lv_obj_t *elaps_lbl = lv_label_create(metrics_cont);
-    lv_label_set_text(elaps_lbl, "ELAPSED");
-    lv_obj_set_style_text_color(elaps_lbl, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(elaps_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_align(elaps_lbl, LV_ALIGN_TOP_LEFT, 50, 0);
+    lv_obj_t *recording = lv_label_create(main_screen);
+    lv_label_set_text(recording, "RECORDING");
+    lv_obj_set_style_text_color(recording, lv_color_hex(UI_COLOR_GREEN), 0);
+    lv_obj_set_style_text_font(recording, &lv_font_montserrat_14, 0);
+    lv_obj_align(recording, LV_ALIGN_TOP_MID, 0, 16);
 
-    time_label = lv_label_create(metrics_cont);
+    lv_obj_t *elapsed_title = lv_label_create(main_screen);
+    lv_label_set_text(elapsed_title, "ELAPSED");
+    lv_obj_set_style_text_color(elapsed_title, lv_color_hex(UI_COLOR_MUTED), 0);
+    lv_obj_set_style_text_font(elapsed_title, &lv_font_montserrat_14, 0);
+    lv_obj_align(elapsed_title, LV_ALIGN_TOP_RIGHT, -208, 12);
+
+    time_label = lv_label_create(main_screen);
     lv_label_set_text(time_label, "0s");
     lv_obj_set_style_text_color(time_label, lv_color_hex(UI_COLOR_WHITE), 0);
     lv_obj_set_style_text_font(time_label, &lv_font_montserrat_32, 0);
-    lv_obj_align(time_label, LV_ALIGN_TOP_LEFT, 80, 20);
+    lv_obj_align(time_label, LV_ALIGN_TOP_RIGHT, -206, 28);
 
-    lv_obj_t *curr_lbl = lv_label_create(metrics_cont);
-    lv_label_set_text(curr_lbl, "CURRENT");
-    lv_obj_set_style_text_color(curr_lbl, lv_color_hex(0x888888), 0);
-    lv_obj_set_style_text_font(curr_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_align(curr_lbl, LV_ALIGN_TOP_LEFT, 180, 0);
+    lv_obj_t *current_title = lv_label_create(main_screen);
+    lv_label_set_text(current_title, "CURRENT");
+    lv_obj_set_style_text_color(current_title, lv_color_hex(UI_COLOR_MUTED), 0);
+    lv_obj_set_style_text_font(current_title, &lv_font_montserrat_14, 0);
+    lv_obj_align(current_title, LV_ALIGN_TOP_RIGHT, -76, 12);
 
-    weight_label = lv_label_create(metrics_cont);
+    weight_label = lv_label_create(main_screen);
     lv_label_set_text(weight_label, "0.0g");
     lv_obj_set_style_text_color(weight_label, lv_color_hex(UI_COLOR_GREEN), 0);
     lv_obj_set_style_text_font(weight_label, &lv_font_montserrat_32, 0);
-    lv_obj_align(weight_label, LV_ALIGN_TOP_LEFT, 180, 20);
+    lv_obj_align(weight_label, LV_ALIGN_TOP_RIGHT, -72, 28);
 
-    // Chart
     chart = lv_chart_create(main_screen);
-    lv_obj_set_size(chart, 760, 360);
-    lv_obj_align(chart, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_set_size(chart, 776, 362);
+    lv_obj_align(chart, LV_ALIGN_BOTTOM_MID, 0, -40);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1000);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1200);
     lv_chart_set_point_count(chart, CHART_BUF_SIZE);
-
+    lv_chart_set_div_line_count(chart, 6, 8);
     lv_obj_set_style_bg_color(chart, lv_color_hex(0x050505), 0);
-    lv_obj_set_style_border_width(chart, 0, 0);
-
-    // Dark grid lines
-    lv_obj_set_style_line_color(chart, lv_color_hex(0x222222), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(chart, lv_color_hex(UI_COLOR_GRAY), 0);
+    lv_obj_set_style_border_width(chart, 1, 0);
+    lv_obj_set_style_line_color(chart, lv_color_hex(0x2A2A2A), LV_PART_MAIN);
     lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
-    lv_chart_set_div_line_count(chart, 5, 10);
-
+    lv_obj_set_style_radius(chart, 4, 0);
     ser = lv_chart_add_series(chart, lv_color_hex(UI_COLOR_GREEN),
                               LV_CHART_AXIS_PRIMARY_Y);
-  } break;
+
+    points_label = lv_label_create(main_screen);
+    lv_label_set_text(points_label, "0 data points");
+    lv_obj_set_style_text_color(points_label, lv_color_hex(0x5A5A5A), 0);
+    lv_obj_set_style_text_font(points_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(points_label, LV_ALIGN_BOTTOM_RIGHT, -20, -12);
+
+    lv_obj_t *sample = lv_label_create(main_screen);
+    lv_label_set_text_fmt(sample, "Sample #%03lu",
+                          (unsigned long)(millis() % 1000));
+    lv_obj_set_style_text_color(sample, lv_color_hex(0x5A5A5A), 0);
+    lv_obj_set_style_text_font(sample, &lv_font_montserrat_14, 0);
+    lv_obj_align(sample, LV_ALIGN_BOTTOM_LEFT, 20, -12);
+
+    end_overlay = lv_obj_create(main_screen);
+    lv_obj_set_size(end_overlay, 776, 362);
+    lv_obj_align_to(end_overlay, chart, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(end_overlay, lv_color_hex(UI_COLOR_BLACK), 0);
+    lv_obj_set_style_bg_opa(end_overlay, LV_OPA_80, 0);
+    lv_obj_set_style_border_width(end_overlay, 0, 0);
+    lv_obj_add_flag(end_overlay, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t *end_a = lv_label_create(end_overlay);
+    lv_label_set_text(end_a, "NO WEIGHT CHANGE DETECTED");
+    lv_obj_set_style_text_color(end_a, lv_color_hex(UI_COLOR_MUTED), 0);
+    lv_obj_set_style_text_font(end_a, &lv_font_montserrat_14, 0);
+    lv_obj_align(end_a, LV_ALIGN_CENTER, 0, -58);
+
+    lv_obj_t *end_b = lv_label_create(end_overlay);
+    lv_label_set_text(end_b, "Measurement ending in");
+    lv_obj_set_style_text_color(end_b, lv_color_hex(UI_COLOR_WHITE), 0);
+    lv_obj_set_style_text_font(end_b, &lv_font_montserrat_24, 0);
+    lv_obj_align(end_b, LV_ALIGN_CENTER, 0, -24);
+
+    end_count_label = lv_label_create(end_overlay);
+    lv_label_set_text(end_count_label, "5");
+    lv_obj_set_style_text_color(end_count_label, lv_color_hex(UI_COLOR_GREEN), 0);
+    lv_obj_set_style_text_font(end_count_label, &lv_font_montserrat_48, 0);
+    lv_obj_align(end_count_label, LV_ALIGN_CENTER, 0, 24);
+    break;
+  }
 
   case UIState::SUCCESS: {
-    lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x00E660), 0);
+    lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_GREEN), 0);
 
-    lv_obj_t *check_cont = lv_obj_create(main_screen);
-    lv_obj_set_size(check_cont, 80, 80);
-    lv_obj_set_style_bg_opa(check_cont, 0, 0);
-    lv_obj_set_style_border_color(check_cont, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_border_width(check_cont, 2, 0);
-    lv_obj_set_style_radius(check_cont, LV_RADIUS_CIRCLE, 0);
-    lv_obj_center(check_cont);
-    lv_obj_set_y(check_cont, -140);
+    lv_obj_t *home_btn = lv_btn_create(main_screen);
+    lv_obj_set_size(home_btn, 44, 44);
+    lv_obj_set_style_radius(home_btn, 4, 0);
+    lv_obj_set_style_bg_color(home_btn, lv_color_hex(0x11B851), 0);
+    lv_obj_set_style_border_width(home_btn, 0, 0);
+    lv_obj_align(home_btn, LV_ALIGN_TOP_LEFT, 20, 20);
+    lv_obj_add_flag(home_btn, LV_OBJ_FLAG_USER_1);
+    lv_obj_add_event_cb(home_btn, event_handler, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *home = lv_label_create(home_btn);
+    lv_label_set_text(home, LV_SYMBOL_HOME);
+    lv_obj_set_style_text_color(home, lv_color_hex(UI_COLOR_BLACK), 0);
+    lv_obj_center(home);
 
-    lv_obj_t *check = lv_label_create(check_cont);
-    lv_label_set_text(check, LV_SYMBOL_OK);
-    lv_obj_set_style_text_color(check, lv_color_hex(0x000000), 0);
-    lv_obj_set_style_text_font(check, &lv_font_montserrat_32, 0);
-    lv_obj_center(check);
+    lv_obj_t *ring = lv_obj_create(main_screen);
+    lv_obj_set_size(ring, 90, 90);
+    lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(ring, lv_color_hex(0x143A23), 0);
+    lv_obj_set_style_border_width(ring, 4, 0);
+    lv_obj_set_style_shadow_width(ring, 0, 0);
+    lv_obj_align(ring, LV_ALIGN_CENTER, 0, -136);
+    lv_obj_t *ok = lv_label_create(ring);
+    lv_label_set_text(ok, LV_SYMBOL_OK);
+    lv_obj_set_style_text_color(ok, lv_color_hex(UI_COLOR_BLACK), 0);
+    lv_obj_set_style_text_font(ok, &lv_font_montserrat_32, 0);
+    lv_obj_center(ok);
 
-    lv_obj_t *msg = lv_label_create(main_screen);
-    lv_label_set_text(msg, "Measurement Collected\nSuccessfully");
-    lv_obj_set_style_text_align(msg, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(msg, lv_color_hex(UI_COLOR_BLACK), 0);
-    lv_obj_set_style_text_font(msg, &lv_font_montserrat_48, 0);
-    lv_obj_align(msg, LV_ALIGN_CENTER, 0, -20);
-
-    lv_obj_t *sync = lv_label_create(main_screen);
-    lv_label_set_text(sync, "Syncing with cloud & entering low power mode");
-    lv_obj_set_style_text_color(sync, lv_color_hex(UI_COLOR_BLACK), 0);
-    lv_obj_set_style_text_font(sync, &lv_font_montserrat_14, 0);
-    lv_obj_align(sync, LV_ALIGN_CENTER, 0, 60);
+    lv_obj_t *title = lv_label_create(main_screen);
+    lv_label_set_text(title, "Measurement Collected\nSuccessfully");
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(title, lv_color_hex(UI_COLOR_BLACK), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, 0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, -28);
 
     status_label = lv_label_create(main_screen);
-    lv_label_set_text(status_label, "0 SECONDS");
-    lv_obj_set_style_text_color(status_label, lv_color_hex(UI_COLOR_BLACK), 0);
-    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_32, 0);
-    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 120);
+    lv_label_set_text(status_label, "Syncing with cloud...");
+    lv_obj_set_style_text_color(status_label, lv_color_hex(0x143A23), 0);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 72);
 
-    // Footer
+    success_count_label = lv_label_create(main_screen);
+    lv_label_set_text(success_count_label, "8");
+    lv_obj_set_style_text_color(success_count_label, lv_color_hex(UI_COLOR_BLACK),
+                                0);
+    lv_obj_set_style_text_font(success_count_label, &lv_font_montserrat_48, 0);
+    lv_obj_align(success_count_label, LV_ALIGN_CENTER, -8, 132);
+
+    lv_obj_t *seconds = lv_label_create(main_screen);
+    lv_label_set_text(seconds, "SECONDS");
+    lv_obj_set_style_text_color(seconds, lv_color_hex(0x1D4E2D), 0);
+    lv_obj_set_style_text_font(seconds, &lv_font_montserrat_14, 0);
+    lv_obj_align(seconds, LV_ALIGN_CENTER, 70, 143);
+
+    success_bar = lv_bar_create(main_screen);
+    lv_obj_set_size(success_bar, 260, 6);
+    lv_bar_set_range(success_bar, 0, 100);
+    lv_bar_set_value(success_bar, 0, LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(success_bar, lv_color_hex(0x39A566), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(success_bar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(success_bar, lv_color_hex(UI_COLOR_BLACK),
+                              LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(success_bar, LV_OPA_30, LV_PART_INDICATOR);
+    lv_obj_align(success_bar, LV_ALIGN_CENTER, 0, 180);
+
     lv_obj_t *f1 = lv_label_create(main_screen);
     lv_label_set_text(f1, "MongoFlo • Data saved locally");
-    lv_obj_set_style_text_color(f1, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_text_color(f1, lv_color_hex(0x1D4E2D), 0);
     lv_obj_set_style_text_font(f1, &lv_font_montserrat_14, 0);
     lv_obj_align(f1, LV_ALIGN_BOTTOM_LEFT, 20, -10);
 
     lv_obj_t *f2 = lv_label_create(main_screen);
     lv_label_set_text(f2, "© 2026 MongoFlo Instruments");
-    lv_obj_set_style_text_color(f2, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_text_color(f2, lv_color_hex(0x1D4E2D), 0);
     lv_obj_set_style_text_font(f2, &lv_font_montserrat_14, 0);
     lv_obj_align(f2, LV_ALIGN_BOTTOM_RIGHT, -20, -10);
-  } break;
+    break;
+  }
 
   case UIState::SYNCING: {
-    lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_GREEN), 0);
+    lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_CARD), 0);
     status_label = lv_label_create(main_screen);
     lv_label_set_text(status_label, "SYNCING TO CLOUD...");
     lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_color(status_label, lv_color_hex(UI_COLOR_BLACK), 0);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(UI_COLOR_GREEN), 0);
     lv_obj_set_style_text_font(status_label, &lv_font_montserrat_48, 0);
-    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 0);
-  } break;
+    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -20);
+
+    lv_obj_t *hint = lv_label_create(main_screen);
+    lv_label_set_text(hint, "Please keep device powered");
+    lv_obj_set_style_text_color(hint, lv_color_hex(UI_COLOR_MUTED), 0);
+    lv_obj_set_style_text_font(hint, &lv_font_montserrat_24, 0);
+    lv_obj_align(hint, LV_ALIGN_CENTER, 0, 36);
+    break;
+  }
 
   case UIState::ERROR: {
-    lv_obj_set_style_bg_color(main_screen, lv_color_hex(0x441111), 0);
+    lv_obj_set_style_bg_color(main_screen, lv_color_hex(UI_COLOR_DANGER), 0);
     status_label = lv_label_create(main_screen);
-    lv_label_set_text_fmt(status_label, "SYSTEM ERROR\nPLEASE RESTART");
+    lv_label_set_text(status_label, "Measurement Failed");
     lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(status_label, lv_color_hex(UI_COLOR_WHITE), 0);
     lv_obj_set_style_text_font(status_label, &lv_font_montserrat_48, 0);
-    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 0);
-  } break;
+    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -40);
+
+    lv_obj_t *desc = lv_label_create(main_screen);
+    lv_label_set_text(desc,
+                      "Data could not be collected.\nCheck scale connection.");
+    lv_obj_set_style_text_align(desc, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(desc, lv_color_hex(0xF8D8D9), 0);
+    lv_obj_set_style_text_font(desc, &lv_font_montserrat_24, 0);
+    lv_obj_align(desc, LV_ALIGN_CENTER, 0, 44);
+    break;
+  }
   }
 }
 
-void ui_update_weight(float weight_g, uint32_t elapsed_s) {
+void ui_update_weight(float weight_g, uint32_t elapsed_s, int ending_countdown_s,
+                      uint32_t data_points) {
   if (current_ui_state != UIState::ACTIVE)
     return;
 
@@ -380,40 +589,103 @@ void ui_update_weight(float weight_g, uint32_t elapsed_s) {
   if (time_label) {
     lv_label_set_text_fmt(time_label, "%lus", (unsigned long)elapsed_s);
   }
+  if (points_label) {
+    lv_label_set_text_fmt(points_label, "%lu data points",
+                          (unsigned long)data_points);
+  }
   if (chart && ser) {
     lv_chart_set_next_value(chart, ser, (lv_coord_t)weight_g);
+  }
+
+  if (end_overlay && end_count_label) {
+    if (ending_countdown_s > 0) {
+      lv_obj_clear_flag(end_overlay, LV_OBJ_FLAG_HIDDEN);
+      lv_label_set_text_fmt(end_count_label, "%d", ending_countdown_s);
+    } else {
+      lv_obj_add_flag(end_overlay, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 }
 
 void ui_set_boot_status(const char *status, int progress_pct) {
   if (current_ui_state != UIState::BOOT)
     return;
-  if (status_label) {
-    static char buf[16];
-    itoa(progress_pct, buf, 10);
-    lv_label_set_text(status_label, buf);
-  }
+
   if (boot_title_label && status) {
     lv_label_set_text(boot_title_label, status);
   }
+  if (boot_count_label) {
+    int displayVal = progress_pct;
+    if (displayVal < 0)
+      displayVal = 0;
+    if (displayVal > 99)
+      displayVal = 99;
+    lv_label_set_text_fmt(boot_count_label, "%d", displayVal);
+  }
   if (boot_bar) {
-    // If progress_pct is in 0-10 recursive countdown (like setup loops)
-    // Map 10-0 to 0-100% or just use as is.
-    // For now, let's assume it's a percentage unless it's <= 10.
+    int barVal = progress_pct;
     if (progress_pct <= 10) {
-      lv_bar_set_value(boot_bar, (10 - progress_pct) * 10, LV_ANIM_OFF);
-    } else {
-      lv_bar_set_value(boot_bar, progress_pct, LV_ANIM_OFF);
+      // Countdown mode: 10 -> full bar, 0 -> empty bar.
+      barVal = progress_pct * 10;
     }
+    if (barVal < 0)
+      barVal = 0;
+    if (barVal > 100)
+      barVal = 100;
+    lv_bar_set_value(boot_bar, barVal, LV_ANIM_OFF);
+  }
+}
+
+void ui_set_boot_network(const char *ssid) {
+  if (!ssid || strlen(ssid) == 0)
+    return;
+
+  strncpy(s_boot_wifi, ssid, sizeof(s_boot_wifi) - 1);
+  s_boot_wifi[sizeof(s_boot_wifi) - 1] = '\0';
+
+  if (boot_wifi_value) {
+    lv_label_set_text(boot_wifi_value, s_boot_wifi);
   }
 }
 
 void ui_set_sync_status(const char *message, bool is_error) {
   if (current_ui_state != UIState::SYNCING &&
-      current_ui_state != UIState::SUCCESS)
+      current_ui_state != UIState::SUCCESS) {
     return;
-  if (status_label) {
+  }
+
+  if (status_label && message) {
+    lv_color_t tone = lv_color_hex(UI_COLOR_GREEN);
+    if (is_error) {
+      tone = lv_color_hex(UI_COLOR_DANGER);
+    } else if (current_ui_state == UIState::SUCCESS) {
+      tone = lv_color_hex(UI_COLOR_BLACK);
+    }
     lv_label_set_text(status_label, message);
+    lv_obj_set_style_text_color(status_label, tone, 0);
+  }
+
+  if (success_count_label && message && current_ui_state == UIState::SUCCESS) {
+    size_t n = strlen(message);
+    bool all_digits = (n > 0);
+    for (size_t i = 0; i < n; ++i) {
+      if (message[i] < '0' || message[i] > '9') {
+        all_digits = false;
+        break;
+      }
+    }
+    int seconds = all_digits ? atoi(message) : -1;
+    if (seconds >= 0 && seconds <= 99) {
+      lv_label_set_text_fmt(success_count_label, "%d", seconds);
+      if (success_bar) {
+        int progress = ((8 - seconds) * 100) / 8;
+        if (progress < 0)
+          progress = 0;
+        if (progress > 100)
+          progress = 100;
+        lv_bar_set_value(success_bar, progress, LV_ANIM_OFF);
+      }
+    }
   }
 }
 
