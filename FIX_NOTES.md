@@ -14,46 +14,74 @@ rst:0x8 (TG1WDT_SYS_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
 
 ## Changes Made
 
-### 1. Upgrade espressif32 platform (`platformio.ini`)
+### 1. Switch to pioarduino platform (`platformio.ini`)
 
-Changed `platform = espressif32` to `platform = espressif32@^6.0.0`.
+Changed `platform = espressif32@^6.0.0` to pioarduino zip URL.
 
-Arduino_GFX 1.5.x requires arduino-esp32 3.x (IDF 5.x), which ships `esp32-hal-periman.h`. The old unversioned platform resolved to espressif32 5.x (arduino-esp32 2.x / IDF 4.4) which lacks this header.
+`espressif32@^6.x` resolved to arduino-esp32 **2.0.17** (IDF 4.4), NOT 3.x as assumed.
+pioarduino is the community fork that actually ships arduino-esp32 3.3.7 (IDF 5.x),
+which provides `esp32-hal-periman.h` required by GFX Library 1.6.x.
 
 ### 2. Upgrade Arduino_GFX library (`platformio.ini`)
 
-Changed `moononournation/GFX Library for Arduino @ 1.4.9` to `moononournation/GFX Library for Arduino @ ^1.5.6`.
+Changed `moononournation/GFX Library for Arduino @ 1.4.9` to `^1.5.6`.
+Resolved to **1.6.5**. v1.4.9 lacks the `bounce_buffer_size_px` constructor parameter.
 
-v1.4.9 does NOT have the `bounce_buffer_size_px` constructor parameter. It was added in 1.5.x.
+### 3. Upgrade NimBLE-Arduino to 2.x (`platformio.ini`)
 
-### 3. Add bounce buffer to RGB panel init (`src/display.cpp`)
+Changed `h2zero/NimBLE-Arduino @ ^1.4.2` to `^2.0.0` (resolved to 2.3.8).
 
-In the `RGB_PANEL_PROFILE == 3` block, added three trailing parameters to the `Arduino_ESP32RGBPanel` constructor:
-
-```cpp
-rgbpanel = new Arduino_ESP32RGBPanel(
-    5 /* DE */, 3 /* VSYNC */, 46 /* HSYNC */, 7 /* PCLK */, 1 /* R0 */,
-    2 /* R1 */, 42 /* R2 */, 41 /* R3 */, 40 /* R4 */, 39 /* G0 */,
-    0 /* G1 */, 45 /* G2 */, 48 /* G3 */, 47 /* G4 */, 21 /* G5 */,
-    14 /* B0 */, 38 /* B1 */, 18 /* B2 */, 17 /* B3 */, 10 /* B4 */,
-    0 /* hsync_p */, 40 /* h_fp */, 48 /* h_pw */, 40 /* h_bp */,
-    0 /* vsync_p */, 13 /* v_fp */, 3 /* v_pw */, 32 /* v_bp */,
-    1 /* pclk_active_neg */, 8000000 /* prefer_speed */,
-    false /* useBigEndian */, 0 /* de_idle_high */, 0 /* pclk_idle_high */,
-    800 * 10 /* bounce_buffer_size_px = 10 lines */);
+NimBLE 1.4.x is only compatible with IDF 4.4. On IDF 5.x it crashes during
+`NimBLEDevice::init()` with a TLSF heap allocator assertion:
 ```
+assert failed: block_locate_free tlsf_control_functions.h:618
+```
+NimBLE 2.x supports IDF 5.x. Required API changes throughout `ble_acaia.cpp/h`,
+`ble_timesync.cpp`, and `main.cpp` (callback signatures, scan API, address constructor).
 
-Bounce buffers (8000 pixels = 16 KB) live in internal SRAM. The LCD DMA reads from these while the CPU asynchronously copies the next chunk from PSRAM, eliminating the bandwidth deadlock that triggered the IWDT.
+### 4. Correct RGB panel timings (`src/display.cpp`)
 
-### 4. Add 64-byte data cache line build flag (`platformio.ini`)
+The original timing values were wrong for this panel. Corrected using confirmed
+working values from the ESPHome community project for this exact board:
 
-Added `-DCONFIG_ESP32S3_DATA_CACHE_LINE_64B=y` to `build_flags`.
+| Parameter | Wrong value | Correct value |
+|---|---|---|
+| pclk | 8 MHz | 16 MHz |
+| hsync_pulse_width | 48 | 4 |
+| hsync_front/back porch | 40 | 8 |
+| vsync_pulse_width | 3 | 4 |
+| vsync_front/back porch | 13/32 | 16 |
 
-Required for stable PSRAM-backed RGB operation — without this, the display can drift/shift horizontally after some time.
+### 5. Add bounce buffer + 64-byte cache flag (`src/display.cpp`, `platformio.ini`)
 
-## Verification
+Bounce buffer `800 * 10` pixels (16 KB in internal SRAM). The LCD DMA reads from
+these while the CPU copies the next chunk from PSRAM, preventing PSRAM bandwidth
+deadlock and scanline corruption artifacts (flickering pixels, horizontal lines).
 
-1. Build: `pio run -e esp32-s3-touch-lcd-7`
-2. Flash + monitor: `pio run -e esp32-s3-touch-lcd-7 -t upload && pio device monitor -b 115200`
-3. Confirm serial output passes "Starting RGB GFX..." without `TG1WDT_SYS_RST`
-4. Confirm display renders without color shifting or screen drift
+Added `-DCONFIG_ESP32S3_DATA_CACHE_LINE_64B=y` to build flags for stable
+PSRAM-backed RGB operation.
+
+## Current Status (as of this branch)
+
+- **Display**: WORKING. Boots, renders UI, color probe (R/G/B) works, no crashes.
+- **BLE scanning**: WORKING. Device scans for Acaia scale after boot.
+- **WiFi/NTP**: WORKING. Time syncs on boot.
+- **Touch input**: NOT WORKING. GT911 driver initialises without error but taps
+  are not registering. Likely a GT911 I2C address, INT pin, or RST pin issue.
+  `TOUCH_RST_PIN = -1` relies on CH422G for reset — needs investigation.
+- **Layout**: UI elements are cramped in top-left (hardcoded 240px-wide coordinates
+  from the original smaller-display version). Needs scaling for 800×480.
+
+## Known Next Steps
+
+1. Debug GT911 touch — verify I2C address (`GT911_I2C_ADDR_BA`), check if CH422G
+   is correctly toggling TP_RST during `Display::begin()`, check INT pin wiring.
+2. Scale UI layout from 240×320 to 800×480 (all hardcoded coordinates in display.cpp).
+
+## Build / Flash
+
+```bash
+cd /path/to/project
+~/.platformio/penv/bin/pio run -e esp32-s3-touch-lcd-7 -t upload
+~/.platformio/penv/bin/pio device monitor -b 115200
+```
