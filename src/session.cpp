@@ -316,9 +316,9 @@ int Session::uploadToGoogleSheet(const String &path) {
   Serial.printf("[Cloud] File: %s (%u bytes)\n", path.c_str(),
                 (unsigned int)fileSize);
 
-  WiFiClientSecure client;
+  static WiFiClientSecure client;
   client.setInsecure(); // No certificate validation for Google
-  HTTPClient http;
+  static HTTPClient http;
 
   // Set a robust timeout (30s) to prevent hanging the UI indefinitely
   http.setTimeout(30000);
