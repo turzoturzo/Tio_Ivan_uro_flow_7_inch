@@ -131,11 +131,11 @@ void Display::begin() {
       2 /* R1 */, 42 /* R2 */, 41 /* R3 */, 40 /* R4 */, 39 /* G0 */,
       0 /* G1 */, 45 /* G2 */, 48 /* G3 */, 47 /* G4 */, 21 /* G5 */,
       14 /* B0 */, 38 /* B1 */, 18 /* B2 */, 17 /* B3 */, 10 /* B4 */,
-      0 /* hsync_p */, 40 /* h_fp */, 48 /* h_pw */, 40 /* h_bp */,
-      0 /* vsync_p */, 13 /* v_fp */, 3 /* v_pw */, 32 /* v_bp */,
-      1 /* pclk_active_neg */, 8000000 /* prefer_speed */,
+      0 /* hsync_p */, 8 /* h_fp */, 4 /* h_pw */, 8 /* h_bp */,
+      0 /* vsync_p */, 16 /* v_fp */, 4 /* v_pw */, 16 /* v_bp */,
+      1 /* pclk_active_neg */, 16000000 /* prefer_speed */,
       false /* useBigEndian */, 0 /* de_idle_high */, 0 /* pclk_idle_high */,
-      800 * 4 /* bounce_buffer_size_px = 4 lines */);
+      800 * 10 /* bounce_buffer_size_px = 10 lines */);
 #else
 #error "Unsupported RGB_PANEL_PROFILE"
 #endif
