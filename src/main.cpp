@@ -125,11 +125,11 @@ static volatile bool sWifiProvisionRequested = false;
 static String sWifiProvisionPayload = "";
 
 class ExportServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer * /*server*/) override {
+  void onConnect(NimBLEServer * /*server*/, NimBLEConnInfo & /*connInfo*/) override {
     sExportClientConnected = true;
     Serial.println("[BLE-EXPORT] Client connected");
   }
-  void onDisconnect(NimBLEServer *server) override {
+  void onDisconnect(NimBLEServer *server, NimBLEConnInfo & /*connInfo*/, int /*reason*/) override {
     sExportClientConnected = false;
     sExportTransferRequested = false;
     Serial.println("[BLE-EXPORT] Client disconnected");
@@ -138,7 +138,7 @@ class ExportServerCallbacks : public NimBLEServerCallbacks {
 };
 
 class ExportRxCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *chr) override {
+  void onWrite(NimBLECharacteristic *chr, NimBLEConnInfo & /*connInfo*/) override {
     std::string raw = chr->getValue();
     String cmd(raw.c_str());
     String upper = cmd;
@@ -328,7 +328,7 @@ static void enterBleExportMode() {
   {
     NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
     adv->addServiceUUID(BLE_EXPORT_SVC_UUID);
-    adv->setScanResponse(
+    adv->enableScanResponse(
         true); // respond to scan requests so name appears in all scanners
     adv->start();
   }
@@ -492,7 +492,7 @@ static void enterWifiSetupMode() {
   {
     NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
     adv->addServiceUUID(BLE_EXPORT_SVC_UUID);
-    adv->setScanResponse(
+    adv->enableScanResponse(
         true); // respond to scan requests so name appears in all scanners
     adv->start();
   }

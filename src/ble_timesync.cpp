@@ -19,7 +19,7 @@ static NimBLEAdvertising* sAdv   = nullptr;
 //   [7] day-of-week  [8] fractions256  [9] adjust-reason
 
 class TimeChrCallbacks : public NimBLECharacteristicCallbacks {
-    void onWrite(NimBLECharacteristic* pChr) override {
+    void onWrite(NimBLECharacteristic* pChr, NimBLEConnInfo& connInfo) override {
         std::string val = pChr->getValue();
         if (val.size() < 7) return;
 
@@ -82,7 +82,7 @@ void bleTimeSync_start() {
     // Configure and start advertising
     sAdv = NimBLEDevice::getAdvertising();
     sAdv->addServiceUUID(CTS_SERVICE_UUID);
-    sAdv->setScanResponse(true);
+    sAdv->enableScanResponse(true);
     sAdv->start();
 
     Serial.println("[CTS] Advertising as 'UroFlow' (CTS peripheral)");

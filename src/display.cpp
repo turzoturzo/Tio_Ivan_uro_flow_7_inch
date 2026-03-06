@@ -135,7 +135,7 @@ void Display::begin() {
       0 /* vsync_p */, 13 /* v_fp */, 3 /* v_pw */, 32 /* v_bp */,
       1 /* pclk_active_neg */, 8000000 /* prefer_speed */,
       false /* useBigEndian */, 0 /* de_idle_high */, 0 /* pclk_idle_high */,
-      800 * 10 /* bounce_buffer_size_px = 10 lines */);
+      800 * 4 /* bounce_buffer_size_px = 4 lines */);
 #else
 #error "Unsupported RGB_PANEL_PROFILE"
 #endif

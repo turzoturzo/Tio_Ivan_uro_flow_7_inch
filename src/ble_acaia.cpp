@@ -9,7 +9,7 @@ BleAcaia* BleAcaia::_instance = nullptr;
 BleAcaia::BleAcaia()
     : _state(State::IDLE),
       _client(nullptr),
-      _targetAddr("00:00:00:00:00:00"),
+      _targetAddr(),
       _hasTarget(false),
       _lastHeartbeat(0),
       _lastNotify(0),
@@ -28,7 +28,7 @@ void BleAcaia::begin(WeightCallback cb, const char* storedMac) {
 
     if (storedMac && strlen(storedMac) >= 17) {
         Serial.printf("[BLE] Trying stored MAC: %s\n", storedMac);
-        _targetAddr = NimBLEAddress(storedMac);
+        _targetAddr = NimBLEAddress(std::string(storedMac), BLE_ADDR_PUBLIC);
         _hasTarget = true;
         _state = State::CONNECTING;
     } else {
@@ -90,7 +90,7 @@ void BleAcaia::getLastMac(char* out_buf, size_t len) const {
 
 // ── NimBLE scan callback ──────────────────────────────────────────────────────
 
-void BleAcaia::onResult(NimBLEAdvertisedDevice* device) {
+void BleAcaia::onResult(const NimBLEAdvertisedDevice* device) {
     std::string name = device->getName();
     // Match first 5 chars against known Acaia scale name prefixes
     std::string prefix = name.substr(0, 5);
@@ -113,7 +113,7 @@ void BleAcaia::onConnect(NimBLEClient* client) {
     Serial.println("[BLE] Connected to scale");
 }
 
-void BleAcaia::onDisconnect(NimBLEClient* client) {
+void BleAcaia::onDisconnect(NimBLEClient* client, int reason) {
     Serial.println("[BLE] Disconnected, will reconnect");
     _charWrite  = nullptr;
     _charNotify = nullptr;
@@ -126,7 +126,7 @@ void BleAcaia::_startScan() {
     Serial.println("[BLE] Starting scan...");
     _state = State::SCANNING;
     NimBLEScan* scan = NimBLEDevice::getScan();
-    scan->setAdvertisedDeviceCallbacks(this, false);
+    scan->setScanCallbacks(this, false);
     scan->setActiveScan(true);
     scan->setInterval(100);
     scan->setWindow(99);
@@ -164,8 +164,8 @@ void BleAcaia::_subscribeAndIdentify() {
     // Fallback: enumerate all services if the expected UUID wasn't found
     if (!_charWrite || !_charNotify) {
         Serial.println("[BLE] Primary service not found — scanning all services");
-        auto* services = _client->getServices(true);
-        for (auto& s : *services) {
+        const auto& services = _client->getServices(true);
+        for (auto& s : services) {
             auto* cw = s->getCharacteristic(NimBLEUUID(ACAIA_CHAR_WRITE));
             auto* cn = s->getCharacteristic(NimBLEUUID(ACAIA_CHAR_NOTIFY));
             if (cw && cn) { _charWrite = cw; _charNotify = cn; break; }
