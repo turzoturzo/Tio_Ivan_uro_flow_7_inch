@@ -176,6 +176,14 @@ void Display::begin() {
   delay(300);
   _gfx->fillScreen(COL_BG);
 
+  // Re-initialize I2C after RGB panel init.
+  // esp_lcd_new_rgb_panel() invalidates the I2C bus state via the IDF 5.x
+  // peripheral manager, causing all subsequent i2cWrite() calls to return
+  // ESP_ERR_INVALID_STATE.  Calling Wire.end() + Wire.begin() resets the
+  // driver and restores normal I2C operation for the GT911 touch controller.
+  Wire.end();
+  Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
+
   _touch = new initGT911(&Wire, GT911_I2C_ADDR_BA);
   if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {
     Serial.println("GT911 init failed!");
@@ -454,6 +462,224 @@ void Display::showWifiSetup(bool timeSynced, const char *storedSsid) {
   _gfx->setTextSize(2);
   _gfx->print("Tap to exit");
   _gfx->flush();
+}
+
+// ── WiFi on-screen keyboard
+// ─────────────────────────────────────────────────────
+
+// Keyboard layout constants
+#define WK_KEY_W    76
+#define WK_KEY_H    48
+#define WK_GAP      3
+#define WK_ROW_H    (WK_KEY_H + WK_GAP + 1)  // 52
+#define WK_X0       7    // keyboard left margin
+#define WK_KB_Y     192  // first keyboard row top
+#define WK_FIELD_X  100
+#define WK_FIELD_W  690
+#define WK_FIELD_H  38
+#define WK_SSID_Y   50
+#define WK_PASS_Y   100
+#define WK_BTN_Y    146
+#define WK_BTN_H    36
+#define WK_STATUS_X 570
+#define WK_STATUS_W 220
+
+// Keyboard character at (row, col) — special codes:
+//   '\b' = backspace, '\n' = GO/connect, 0x01 = SHIFT, ' ' = space
+static char kbCharAt(int row, int col, bool shifted) {
+  if (row < 0 || row >= 5 || col < 0 || col >= 10) return 0;
+  static const char lo[4][11] = {
+    "1234567890", "qwertyuiop",
+    "asdfghjkl",  // 9 chars; col 9 = backspace
+    "zxcvbnm.-"   // 9 chars; col 0 = shift prefix
+  };
+  static const char hi[4][11] = {
+    "!@#$%^&*()", "QWERTYUIOP",
+    "ASDFGHJKL",  "ZXCVBNM,_"
+  };
+  if (row == 2) {
+    if (col == 9) return '\b';
+    return shifted ? hi[2][col] : lo[2][col];
+  }
+  if (row == 3) {
+    if (col == 0) return 0x01; // shift
+    return shifted ? hi[3][col - 1] : lo[3][col - 1];
+  }
+  if (row == 4) {
+    if (col <= 6) return ' ';
+    if (col == 7) return shifted ? '/' : '?';
+    return '\n'; // GO
+  }
+  return shifted ? hi[row][col] : lo[row][col];
+}
+
+// Draw key label text, centered in key rectangle
+static void drawKeyLabel(Arduino_GFX *gfx, int x, int y, int w, int h,
+                         const char *label, uint16_t fg, uint16_t bg) {
+  int len = strlen(label);
+  int tw = len * 12; // approx width at textSize 2
+  gfx->setTextColor(fg, bg);
+  gfx->setCursor(x + (w - tw) / 2, y + (h - 16) / 2);
+  gfx->setTextSize(2);
+  gfx->print(label);
+}
+
+void Display::drawWifiKeyboard(const char *ssid, const char *pass,
+                                int activeField, bool shifted,
+                                const char *status) {
+  _gfx->fillScreen(COL_BG);
+
+  // Title
+  _gfx->setTextColor(COL_TITLE, COL_BG);
+  _gfx->setCursor(20, 12);
+  _gfx->setTextSize(3);
+  _gfx->print("WiFi Setup");
+
+  // BACK button (top-right)
+  _gfx->fillRoundRect(700, 5, 90, 35, 8, COL_DIMGREY);
+  drawKeyLabel(_gfx, 700, 5, 90, 35, "BACK", COL_WHITE, COL_DIMGREY);
+
+  // Field labels
+  _gfx->setTextColor(COL_LABEL, COL_BG);
+  _gfx->setTextSize(2);
+  _gfx->setCursor(10, WK_SSID_Y + 10);
+  _gfx->print("SSID:");
+  _gfx->setCursor(10, WK_PASS_Y + 10);
+  _gfx->print("Pass:");
+
+  // Draw text fields
+  updateWifiField(0, ssid, activeField == 0);
+  updateWifiField(1, pass, activeField == 1);
+
+  // CONNECT button
+  _gfx->fillRoundRect(250, WK_BTN_Y, 300, WK_BTN_H, 10, COL_GREEN);
+  drawKeyLabel(_gfx, 250, WK_BTN_Y, 300, WK_BTN_H, "CONNECT", COL_WHITE, COL_GREEN);
+
+  // Status
+  if (status) updateWifiStatus(status, COL_YELLOW);
+
+  // Keyboard
+  drawWifiKeys(shifted);
+  _gfx->flush();
+}
+
+void Display::drawWifiKeys(bool shifted) {
+  for (int row = 0; row < 5; row++) {
+    int y = WK_KB_Y + row * WK_ROW_H;
+    if (row == 4) {
+      // Row 4: SPACE (keys 0-6), ? (key 7), GO (keys 8-9)
+      int spaceW = 7 * WK_KEY_W + 6 * WK_GAP;
+      _gfx->fillRoundRect(WK_X0, y, spaceW, WK_KEY_H, 6, COL_DIMGREY);
+      drawKeyLabel(_gfx, WK_X0, y, spaceW, WK_KEY_H, "SPACE", COL_WHITE, COL_DIMGREY);
+
+      int qx = WK_X0 + 7 * (WK_KEY_W + WK_GAP);
+      _gfx->fillRoundRect(qx, y, WK_KEY_W, WK_KEY_H, 6, COL_DIMGREY);
+      char qBuf[2] = { shifted ? '/' : '?', 0 };
+      drawKeyLabel(_gfx, qx, y, WK_KEY_W, WK_KEY_H, qBuf, COL_WHITE, COL_DIMGREY);
+
+      int goX = WK_X0 + 8 * (WK_KEY_W + WK_GAP);
+      int goW = 2 * WK_KEY_W + WK_GAP;
+      _gfx->fillRoundRect(goX, y, goW, WK_KEY_H, 6, COL_GREEN);
+      drawKeyLabel(_gfx, goX, y, goW, WK_KEY_H, "GO", COL_WHITE, COL_GREEN);
+      continue;
+    }
+
+    for (int col = 0; col < 10; col++) {
+      int x = WK_X0 + col * (WK_KEY_W + WK_GAP);
+      char ch = kbCharAt(row, col, shifted);
+      uint16_t bg = COL_DIMGREY;
+      char label[2] = { ch, 0 };
+
+      if (ch == '\b') {
+        bg = COL_RED;
+        strcpy(label, "");
+        drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, "DEL", COL_WHITE, bg);
+        _gfx->fillRoundRect(x, y, WK_KEY_W, WK_KEY_H, 6, bg);
+        drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, "DEL", COL_WHITE, bg);
+        continue;
+      }
+      if (ch == 0x01) { // SHIFT
+        bg = shifted ? COL_BTN_BLUE : 0x3186;
+        _gfx->fillRoundRect(x, y, WK_KEY_W, WK_KEY_H, 6, bg);
+        drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, "SH", COL_WHITE, bg);
+        continue;
+      }
+
+      _gfx->fillRoundRect(x, y, WK_KEY_W, WK_KEY_H, 6, bg);
+      drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, label, COL_WHITE, bg);
+    }
+  }
+}
+
+void Display::updateWifiField(int field, const char *text, bool active) {
+  int y = (field == 0) ? WK_SSID_Y : WK_PASS_Y;
+  uint16_t border = active ? COL_YELLOW : COL_DIMGREY;
+  uint16_t fieldBg = 0x1082; // very dark grey
+
+  _gfx->fillRoundRect(WK_FIELD_X, y, WK_FIELD_W, WK_FIELD_H, 6, fieldBg);
+  _gfx->drawRoundRect(WK_FIELD_X, y, WK_FIELD_W, WK_FIELD_H, 6, border);
+
+  _gfx->setTextColor(COL_WHITE, fieldBg);
+  _gfx->setCursor(WK_FIELD_X + 8, y + 11);
+  _gfx->setTextSize(2);
+  if (text && strlen(text) > 0) _gfx->print(text);
+
+  // Blinking-style cursor
+  if (active) {
+    int cx = WK_FIELD_X + 8 + (text ? (int)strlen(text) * 12 : 0);
+    if (cx < WK_FIELD_X + WK_FIELD_W - 8)
+      _gfx->fillRect(cx, y + 8, 2, WK_FIELD_H - 16, COL_YELLOW);
+  }
+}
+
+void Display::updateWifiStatus(const char *status, uint16_t color) {
+  _gfx->fillRect(WK_STATUS_X, WK_BTN_Y, WK_STATUS_W, WK_BTN_H, COL_BG);
+  _gfx->setTextColor(color, COL_BG);
+  _gfx->setCursor(WK_STATUS_X, WK_BTN_Y + 10);
+  _gfx->setTextSize(2);
+  _gfx->print(status);
+}
+
+char Display::mapWifiKeyTouch(int x, int y, bool shifted) {
+  // BACK button
+  if (y >= 5 && y < 40 && x >= 700) return 0x1B;
+
+  // SSID field
+  if (y >= WK_SSID_Y && y < WK_SSID_Y + WK_FIELD_H && x >= WK_FIELD_X)
+    return 0x02;
+
+  // Password field
+  if (y >= WK_PASS_Y && y < WK_PASS_Y + WK_FIELD_H && x >= WK_FIELD_X)
+    return 0x03;
+
+  // CONNECT button
+  if (y >= WK_BTN_Y && y < WK_BTN_Y + WK_BTN_H && x >= 250 && x < 550)
+    return '\n';
+
+  // Keyboard rows
+  if (y < WK_KB_Y) return 0;
+  int row = (y - WK_KB_Y) / WK_ROW_H;
+  if (row < 0 || row >= 5) return 0;
+
+  // Row 4 special: merged keys
+  if (row == 4) {
+    int spaceEnd = WK_X0 + 7 * (WK_KEY_W + WK_GAP);
+    if (x < spaceEnd) return ' ';
+    int qEnd = WK_X0 + 8 * (WK_KEY_W + WK_GAP);
+    if (x < qEnd) return shifted ? '/' : '?';
+    return '\n'; // GO
+  }
+
+  int col = (x - WK_X0) / (WK_KEY_W + WK_GAP);
+  if (col < 0 || col >= 10) return 0;
+
+  // Verify touch is within key (not in gap)
+  int kx = WK_X0 + col * (WK_KEY_W + WK_GAP);
+  if (x > kx + WK_KEY_W) return 0;
+  int ky = WK_KB_Y + row * WK_ROW_H;
+  if (y > ky + WK_KEY_H) return 0;
+
+  return kbCharAt(row, col, shifted);
 }
 
 // ── Post-session success screen

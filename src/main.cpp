@@ -469,83 +469,118 @@ static void enterBleExportMode() {
   }
 }
 
-// ── WiFi setup mode (on-device BLE provisioning)
-// ────────────────────────────── Advertises as "Logger" with the same UUIDs as
-// BLE export mode so the same ble_export_receive.py --wifi-ssid tool can
-// provision credentials.
+// ── WiFi setup mode (on-screen keyboard)
+// ────────────────────────────── User types SSID and password directly on the
+// touchscreen using a full QWERTY keyboard.  No BLE needed.
 
 static void enterWifiSetupMode() {
   ensurePrefsOpen();
-  String storedSsid = gPrefsOpen ? gPrefs.getString(NVS_KEY_WIFI_SSID, "") : "";
-
-  NimBLEDevice::init(BLE_EXPORT_DEV_NAME);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-  NimBLEServer *server = NimBLEDevice::createServer();
-  server->setCallbacks(&sExportServerCbs, false);
-  NimBLEService *svc = server->createService(BLE_EXPORT_SVC_UUID);
-  sExportTx =
-      svc->createCharacteristic(BLE_EXPORT_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
-  NimBLECharacteristic *rx =
-      svc->createCharacteristic(BLE_EXPORT_RX_UUID, NIMBLE_PROPERTY::WRITE);
-  rx->setCallbacks(&sExportRxCbs);
-  svc->start();
-  {
-    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-    adv->addServiceUUID(BLE_EXPORT_SVC_UUID);
-    adv->enableScanResponse(
-        true); // respond to scan requests so name appears in all scanners
-    adv->start();
+  // Pre-fill from NVS if credentials already exist
+  char ssidBuf[64] = {};
+  char passBuf[64] = {};
+  if (gPrefsOpen) {
+    String s = gPrefs.getString(NVS_KEY_WIFI_SSID, "");
+    String p = gPrefs.getString(NVS_KEY_WIFI_PASS, "");
+    strlcpy(ssidBuf, s.c_str(), sizeof(ssidBuf));
+    strlcpy(passBuf, p.c_str(), sizeof(passBuf));
   }
 
-  gDisplay.showWifiSetup(gTimeSynced,
-                         storedSsid.length() ? storedSsid.c_str() : nullptr);
-  Serial.println(
-      "[WIFI-SETUP] Advertising as 'Logger'; awaiting WIFI:ssid|pass");
+  int activeField = 0; // 0 = SSID, 1 = password
+  bool shifted = false;
+  gDisplay.drawWifiKeyboard(ssidBuf, passBuf, activeField, shifted);
+  Serial.println("[WIFI-SETUP] On-screen keyboard active");
 
   while (true) {
-    if (sWifiProvisionRequested) {
-      sWifiProvisionRequested = false;
-      int sep = sWifiProvisionPayload.indexOf('|');
-      if (sep <= 0) {
-        gDisplay.showBoot("WiFi setup:\nBad payload format");
-      } else {
-        String ssid = sWifiProvisionPayload.substring(0, sep);
-        String pass = sWifiProvisionPayload.substring(sep + 1);
-        ssid.trim();
-        pass.trim();
-        if (ssid.length() == 0) {
-          gDisplay.showBoot("WiFi setup:\nSSID required");
-        } else {
-          if (gPrefsOpen) {
-            gPrefs.putString(NVS_KEY_WIFI_SSID, ssid);
-            gPrefs.putString(NVS_KEY_WIFI_PASS, pass);
-            Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssid.c_str());
-          }
-          gDisplay.showBoot("WiFi setup:\nSyncing time...");
-          gTimeSynced =
-              syncTimeViaNtp(ssid.c_str(), pass.c_str(), WIFI_TIMEOUT_S);
-          if (gTimeSynced) {
-            bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_OK_TIME_SYNCED",
-                                19);
-            gDisplay.showBoot("WiFi setup:\nSaved & time synced!\nTap to exit");
-          } else {
-            bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_SAVED_TIME_FAIL",
-                                20);
-            gDisplay.showBoot("WiFi setup:\nSaved, sync failed\nTap to exit");
-          }
-          delay(2000);
-          ESP.restart();
-        }
-      }
-      delay(900);
-      gDisplay.showWifiSetup(
-          gTimeSynced, storedSsid.length() ? storedSsid.c_str() : nullptr);
+    int tx, ty;
+    if (!gDisplay.getTouch(tx, ty)) {
+      delay(30);
+      continue;
     }
 
-    if (consumeTouchPress()) {
-      ESP.restart();
+    // Debounce: wait for release
+    delay(80);
+    int dx, dy;
+    while (gDisplay.getTouch(dx, dy)) delay(20);
+
+    char key = gDisplay.mapWifiKeyTouch(tx, ty, shifted);
+    if (key == 0) continue;
+
+    char *buf = (activeField == 0) ? ssidBuf : passBuf;
+    size_t maxLen = (activeField == 0) ? 32 : 63;
+    size_t len = strlen(buf);
+
+    switch (key) {
+      case 0x1B: // BACK
+        ESP.restart();
+        return;
+
+      case 0x02: // tap SSID field
+        if (activeField != 0) {
+          activeField = 0;
+          gDisplay.updateWifiField(0, ssidBuf, true);
+          gDisplay.updateWifiField(1, passBuf, false);
+        }
+        break;
+
+      case 0x03: // tap password field
+        if (activeField != 1) {
+          activeField = 1;
+          gDisplay.updateWifiField(0, ssidBuf, false);
+          gDisplay.updateWifiField(1, passBuf, true);
+        }
+        break;
+
+      case 0x01: // SHIFT
+        shifted = !shifted;
+        gDisplay.drawWifiKeys(shifted);
+        break;
+
+      case '\b': // backspace
+        if (len > 0) {
+          buf[len - 1] = '\0';
+          gDisplay.updateWifiField(activeField, buf, true);
+        }
+        break;
+
+      case '\n': { // CONNECT / GO
+        if (strlen(ssidBuf) == 0) {
+          gDisplay.updateWifiStatus("SSID required!", 0xF800);
+          break;
+        }
+        // Save credentials
+        if (gPrefsOpen) {
+          gPrefs.putString(NVS_KEY_WIFI_SSID, ssidBuf);
+          gPrefs.putString(NVS_KEY_WIFI_PASS, passBuf);
+          Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssidBuf);
+        }
+        gDisplay.updateWifiStatus("Connecting...", 0xFFE0);
+        gTimeSynced = syncTimeViaNtp(ssidBuf, passBuf, WIFI_TIMEOUT_S);
+        if (gTimeSynced) {
+          gDisplay.updateWifiStatus("Time synced!", 0x07E0);
+          Serial.println("[WIFI-SETUP] Connected & time synced");
+        } else {
+          gDisplay.updateWifiStatus("Saved (no sync)", 0xFFE0);
+          Serial.println("[WIFI-SETUP] Saved but NTP sync failed");
+        }
+        delay(2000);
+        ESP.restart();
+        return;
+      }
+
+      default: // printable character
+        if (len < maxLen) {
+          buf[len] = key;
+          buf[len + 1] = '\0';
+          gDisplay.updateWifiField(activeField, buf, true);
+          // Auto-disable shift after one character
+          if (shifted) {
+            shifted = false;
+            gDisplay.drawWifiKeys(shifted);
+          }
+        }
+        break;
     }
-    delay(40);
+    delay(30);
   }
 }
 
