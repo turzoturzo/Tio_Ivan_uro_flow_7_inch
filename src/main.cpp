@@ -892,37 +892,19 @@ void loop() {
   gBle.tick();
   gSession.tick();
 
-  // If connected but user never starts a measurement, sleep after 30s.
-  static uint32_t connectedIdleStartMs = 0;
-  if (gBle.isConnected() && gSession.state() == Session::State::IDLE) {
-    if (connectedIdleStartMs == 0)
-      connectedIdleStartMs = millis();
-    if (millis() - connectedIdleStartMs >= CONNECT_TO_WEIGHT_TIMEOUT_MS) {
-      gDisplay.showBoot("No weight in 90s.\nSleeping...");
-      delay(1200);
-      digitalWrite(TFT_BL_PIN, LOW);
-      Serial.println("[Sleep] No measurement started, entering deep sleep");
-      Serial.flush();
-      esp_deep_sleep_start();
-    }
-  } else {
-    connectedIdleStartMs = 0;
-  }
-
   // ── Post-session: upload and wait for restart ─────────────────────
-  // We use LVGL to render an overlay. This replaces the old primitive
-  // deep-sleep loop.
+  // We use LVGL to render an opaque overlay.
   if (gSession.state() == Session::State::ENDED) {
-
     bg_panel = lv_obj_create(lv_scr_act());
     lv_obj_set_size(bg_panel, 800, 480);
     lv_obj_align(bg_panel, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(bg_panel, lv_color_hex(0x222222), 0);
-    lv_obj_set_style_bg_opa(bg_panel, LV_OPA_90, 0);
+    lv_obj_set_style_bg_opa(bg_panel, LV_OPA_COVER, 0); // Opaque to hide chart
     lv_obj_set_style_border_width(bg_panel, 0, 0);
 
     lv_obj_t *status_label = lv_label_create(bg_panel);
     lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_24, 0);
     lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -40);
 
     String savedName = gSession.lastSavedName();
@@ -930,14 +912,14 @@ void loop() {
 
     if (measurementSaved) {
       lv_label_set_text(status_label, "Cloud Syncing...");
-      lv_task_handler(); // Force UI update before blocking network call
+      lv_task_handler(); // Update screen before blocking
 
       int status = gSession.uploadToGoogleSheet(savedName);
 
       if (status == 1) {
         lv_label_set_text(status_label, "Cloud Sync OK");
       } else {
-        lv_label_set_text_fmt(status_label, "Cloud Sync FAIL\n(Code: %d)",
+        lv_label_set_text_fmt(status_label, "Cloud Sync FAIL (Code: %d)",
                               status);
       }
     } else {
@@ -945,15 +927,16 @@ void loop() {
     }
 
     lv_obj_t *btn = lv_btn_create(bg_panel);
-    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 80);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0x007BFF), 0);
-    lv_obj_set_size(btn, 300, 60);
+    lv_obj_set_size(btn, 300, 70);
 
     lv_obj_t *btn_label = lv_label_create(btn);
     lv_label_set_text(btn_label, "Start New Measurement");
     lv_obj_center(btn_label);
 
     lv_obj_add_event_cb(btn, restart_btn_cb, LV_EVENT_CLICKED, NULL);
+    lv_task_handler(); // Process one more time to show updated status
 
     gSession.acknowledgeEnded();
   }

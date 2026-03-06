@@ -6,6 +6,9 @@
     - Resolved a stack overflow crash during WiFi uploads by moving large network objects (`HTTPClient`, `WiFiClientSecure`) to static memory. 
     - Fixed an `lv_tick_inc` compilation error by correctly configuring `LV_TICK_CUSTOM`.
 - **Logic Improvements**:
+    - **UI Overlap Fixed**: Made the post-session "Cloud Sync" screen fully opaque (LV_OPA_COVER) to completely hide the underlying chart.
+    - **Display Noise Fixed**: Identified and removed a GPIO conflict; the code was trying to use GPIO 2 as a backlight pin, but it's actually an RGB data line (R1). This was causing the "lines and noise" on the screen.
+    - **Restart Button Optimized**: The "Start New Measurement" button is nowCentered and fully responsive.
     - Replaced the post-measurement "Deep Sleep" with a non-blocking LVGL UI.
     - Added a "Start New Measurement" button that resets the session state without dropping the BLE connection to the Acaia scale.
     - Extended the Google Apps Script upload timeout to 30 seconds to handle cold starts.
