@@ -876,6 +876,16 @@ void setup() {
 // ── loop()
 // ────────────────────────────────────────────────────────────────────
 
+static lv_obj_t *bg_panel = nullptr;
+
+static void restart_btn_cb(lv_event_t *e) {
+  if (bg_panel) {
+    lv_obj_del(bg_panel);
+    bg_panel = nullptr;
+  }
+  gSession.reset();
+}
+
 void loop() {
   lv_task_handler();
 
@@ -899,52 +909,53 @@ void loop() {
     connectedIdleStartMs = 0;
   }
 
-  // ── Post-session: show success screen then deep sleep ─────────────────────
-  // Checked before deriveState() so we never try to render a normal screen
-  // against an ENDED session.  Deep sleep acts like a hard reset — the next
-  // RESET or power cycle runs setup() fresh.
+  // ── Post-session: upload and wait for restart ─────────────────────
+  // We use LVGL to render an overlay. This replaces the old primitive
+  // deep-sleep loop.
   if (gSession.state() == Session::State::ENDED) {
-    gDisplay.showSessionComplete(gSession.endedRowCount(),
-                                 gSession.endedDurationMs());
-    delay(2000); // Show checkmark for 2 seconds
+
+    bg_panel = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(bg_panel, 800, 480);
+    lv_obj_align(bg_panel, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_color(bg_panel, lv_color_hex(0x222222), 0);
+    lv_obj_set_style_bg_opa(bg_panel, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(bg_panel, 0, 0);
+
+    lv_obj_t *status_label = lv_label_create(bg_panel);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -40);
 
     String savedName = gSession.lastSavedName();
     bool measurementSaved = savedName.length() > 0;
 
     if (measurementSaved) {
-      // Trigger Cloud Upload (Google Sheets)
-      gDisplay.showBoot("Cloud Syncing...");
+      lv_label_set_text(status_label, "Cloud Syncing...");
+      lv_task_handler(); // Force UI update before blocking network call
+
       int status = gSession.uploadToGoogleSheet(savedName);
 
       if (status == 1) {
-        gDisplay.showBoot("Cloud Sync OK");
-        delay(2000);
+        lv_label_set_text(status_label, "Cloud Sync OK");
       } else {
-        char failMsg[64];
-        if (status == 0) {
-          snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(WiFi Timeout)");
-        } else {
-          snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(Code: %d)",
-                   status);
-        }
-        gDisplay.showBoot(failMsg);
-        delay(6000); // Extra time to read the error code
+        lv_label_set_text_fmt(status_label, "Cloud Sync FAIL\n(Code: %d)",
+                              status);
       }
     } else {
-      gDisplay.showBoot("Measurement too short\nNot saved");
-      delay(2500);
+      lv_label_set_text(status_label, "Measurement too short to save.");
     }
 
-    // After success checkmark, show summary before sleep
-    gDisplay.showBoot(measurementSaved ? "Measurement Saved"
-                                       : "No file was saved");
-    delay(1500);
+    lv_obj_t *btn = lv_btn_create(bg_panel);
+    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 40);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0x007BFF), 0);
+    lv_obj_set_size(btn, 300, 60);
 
-    digitalWrite(TFT_BL_PIN, LOW); // backlight off
-    Serial.println("[Sleep] Entering deep sleep");
-    Serial.flush();
-    esp_deep_sleep_start(); // no wakeup source — RESET to wake
-                            // never returns
+    lv_obj_t *btn_label = lv_label_create(btn);
+    lv_label_set_text(btn_label, "Start New Measurement");
+    lv_obj_center(btn_label);
+
+    lv_obj_add_event_cb(btn, restart_btn_cb, LV_EVENT_CLICKED, NULL);
+
+    gSession.acknowledgeEnded();
   }
 
   // Persist MAC once connected

@@ -320,8 +320,8 @@ int Session::uploadToGoogleSheet(const String &path) {
   client.setInsecure(); // No certificate validation for Google
   HTTPClient http;
 
-  // Set a robust timeout (15s) to prevent hanging the UI indefinitely
-  http.setTimeout(15000);
+  // Set a robust timeout (30s) to prevent hanging the UI indefinitely
+  http.setTimeout(30000);
   http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
 
   // Build URL with parameters: filename and device_name

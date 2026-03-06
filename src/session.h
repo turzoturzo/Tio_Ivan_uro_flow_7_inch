@@ -6,7 +6,7 @@
 
 class Session {
 public:
-  enum class State { IDLE, ACTIVE, ENDED };
+  enum class State { IDLE, ACTIVE, ENDED, WAITING };
 
   Session();
 
@@ -18,6 +18,18 @@ public:
 
   // Call every loop() to check the idle timeout
   void tick();
+
+  // Moves the session from ENDED to WAITING so we don't repeat the end logic
+  void acknowledgeEnded() {
+    if (_state == State::ENDED)
+      _state = State::WAITING;
+  }
+
+  // Reset to IDLE to allow a new measurement
+  void reset() {
+    _state = State::IDLE;
+    _lastWeightMs = millis();
+  }
 
   // Accessors for display
   State state() const { return _state; }
