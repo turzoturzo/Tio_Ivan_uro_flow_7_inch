@@ -4,9 +4,11 @@
 #include <Preferences.h>
 #include <USB.h>
 #include <USBMSC.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include <esp_partition.h>
 #include <esp_sleep.h>
+#include <lvgl.h>
 #include <wear_levelling.h>
 
 #include "ble_acaia.h"
@@ -15,6 +17,7 @@
 #include "display.h"
 #include "main.h"
 #include "session.h"
+#include "ui.h"
 #include "wifi_ntp.h"
 
 // ── Globals
@@ -30,6 +33,9 @@ static bool gPrefsOpen = false;
 
 static uint32_t gLastDisplayMs = 0;
 static const uint32_t DISPLAY_INTERVAL_MS = 200; // 5 Hz
+
+// UI handling is now managed by ui.h/ui.cpp
+static lv_obj_t *bg_panel = nullptr;
 
 // Touch handling is now managed by gDisplay using the GT911 driver.
 
@@ -125,11 +131,13 @@ static volatile bool sWifiProvisionRequested = false;
 static String sWifiProvisionPayload = "";
 
 class ExportServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer * /*server*/) override {
+  void onConnect(NimBLEServer * /*server*/,
+                 NimBLEConnInfo & /*connInfo*/) override {
     sExportClientConnected = true;
     Serial.println("[BLE-EXPORT] Client connected");
   }
-  void onDisconnect(NimBLEServer *server) override {
+  void onDisconnect(NimBLEServer *server, NimBLEConnInfo & /*connInfo*/,
+                    int /*reason*/) override {
     sExportClientConnected = false;
     sExportTransferRequested = false;
     Serial.println("[BLE-EXPORT] Client disconnected");
@@ -138,7 +146,8 @@ class ExportServerCallbacks : public NimBLEServerCallbacks {
 };
 
 class ExportRxCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic *chr) override {
+  void onWrite(NimBLECharacteristic *chr,
+               NimBLEConnInfo & /*connInfo*/) override {
     std::string raw = chr->getValue();
     String cmd(raw.c_str());
     String upper = cmd;
@@ -297,10 +306,10 @@ static bool bleExportAllCsv() {
 }
 
 static void enterBleExportMode() {
-  gDisplay.showBoot("BLE export:\nmount storage...");
+  ui_set_boot_status("BLE export:\nmount storage...", 0);
   Serial.println("[BLE-EXPORT] Enter mode");
   if (!FFat.begin(true)) {
-    gDisplay.showBoot("BLE export:\nFAT mount FAIL");
+    ui_set_boot_status("BLE export:\nFAT mount FAIL", 0);
     Serial.println("[BLE-EXPORT] ERROR: FFat.begin(true) failed");
     delay(5000);
     ESP.restart();
@@ -328,13 +337,14 @@ static void enterBleExportMode() {
   {
     NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
     adv->addServiceUUID(BLE_EXPORT_SVC_UUID);
-    adv->setScanResponse(
+    adv->enableScanResponse(
         true); // respond to scan requests so name appears in all scanners
     adv->start();
   }
 
-  gDisplay.showBoot("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
-                    "screen to export all CSV");
+  ui_set_boot_status("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
+                     "screen to export all CSV",
+                     0);
   Serial.println(
       "[BLE-EXPORT] Advertising as 'Logger'; tap screen to transfer");
 
@@ -344,7 +354,7 @@ static void enterBleExportMode() {
       sWifiProvisionRequested = false;
       int sep = sWifiProvisionPayload.indexOf('|');
       if (sep <= 0) {
-        gDisplay.showBoot("BLE export:\nBad WiFi payload");
+        ui_set_boot_status("BLE export:\nBad WiFi payload", 0);
         bleExportSendError("WIFI format: WIFI:ssid|password");
       } else {
         String ssid = sWifiProvisionPayload.substring(0, sep);
@@ -352,39 +362,41 @@ static void enterBleExportMode() {
         ssid.trim();
         pass.trim();
         if (ssid.length() == 0) {
-          gDisplay.showBoot("BLE export:\nSSID required");
+          ui_set_boot_status("BLE export:\nSSID required", 0);
           bleExportSendError("SSID required");
         } else {
           ensurePrefsOpen();
           if (!gPrefsOpen) {
-            gDisplay.showBoot("BLE export:\nNVS error");
+            ui_set_boot_status("BLE export:\nNVS error", 0);
             bleExportSendError("NVS open failed");
           } else {
             gPrefs.putString(NVS_KEY_WIFI_SSID, ssid);
             gPrefs.putString(NVS_KEY_WIFI_PASS, pass);
             Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssid.c_str());
-            gDisplay.showBoot("BLE export:\nSyncing time...");
+            ui_set_boot_status("BLE export:\nSyncing time...", 0);
             gTimeSynced =
                 syncTimeViaNtp(ssid.c_str(), pass.c_str(), WIFI_TIMEOUT_S);
             if (gTimeSynced) {
               bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_OK_TIME_SYNCED",
                                   19);
-              gDisplay.showBoot("BLE export:\nWiFi saved\nTime synced");
+              ui_set_boot_status("BLE export:\nWiFi saved\nTime synced", 0);
             } else {
               bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_SAVED_TIME_FAIL",
                                   20);
-              gDisplay.showBoot("BLE export:\nWiFi saved\nTime sync failed");
+              ui_set_boot_status("BLE export:\nWiFi saved\nTime sync failed",
+                                 0);
             }
           }
         }
       }
       delay(900);
-      gDisplay.showBoot("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
-                        "screen to export all CSV");
+      ui_set_boot_status("BLE Export Ready\nConnect from Mac as 'Logger'\nTap "
+                         "screen to export all CSV",
+                         0);
     }
 
     if (sExportClientConnected && sExportTransferRequested && !transferDone) {
-      gDisplay.showBoot("BLE export:\ntransferring all CSV...");
+      ui_set_boot_status("BLE export:\ntransferring all CSV...", 0);
       sExportTransferRequested = false;
       transferDone = bleExportAllCsv();
 
@@ -407,7 +419,7 @@ static void enterBleExportMode() {
           }
         }
 
-        gDisplay.showBleExportDeletePrompt(exportedCount);
+        ui_set_boot_status("Delete all exported CSV files?", 0);
         uint32_t promptStart = millis();
         while (millis() - promptStart < 15000) {
           int tx = 0, ty = 0;
@@ -438,7 +450,7 @@ static void enterBleExportMode() {
                 root.close();
               }
               Serial.printf("[BLE-EXPORT] Deleted %d CSV files\n", deleted);
-              gDisplay.showBleExportDeleted(deleted);
+              ui_set_boot_status("CSV Files Deleted", 100);
               delay(2000);
               FFat.end();
               ESP.restart();
@@ -448,15 +460,16 @@ static void enterBleExportMode() {
           }
           delay(40);
         }
-        gDisplay.showBoot("BLE export:\nDONE\nTap to exit");
+        ui_set_boot_status("BLE export:\nDONE\nTap to exit", 0);
       } else {
-        gDisplay.showBoot("BLE export:\nFAILED\nTap to exit");
+        ui_set_boot_status("BLE export:\nFAILED\nTap to exit", 0);
       }
     }
 
     if (consumeTouchPress()) {
       if (!sExportClientConnected) {
-        gDisplay.showBoot("BLE Export Ready\nWaiting for Mac connection...");
+        ui_set_boot_status("BLE Export Ready\nWaiting for Mac connection...",
+                           0);
         delay(500);
       } else if (!transferDone) {
         sExportTransferRequested = true;
@@ -469,91 +482,227 @@ static void enterBleExportMode() {
   }
 }
 
-// ── WiFi setup mode (on-device BLE provisioning)
-// ────────────────────────────── Advertises as "Logger" with the same UUIDs as
-// BLE export mode so the same ble_export_receive.py --wifi-ssid tool can
-// provision credentials.
+// ── WiFi setup mode (on-screen keyboard)
+// ────────────────────────────── User types SSID and password directly on the
+// touchscreen using a full QWERTY keyboard.  No BLE needed.
+
+static volatile bool sWifiUiDone = false;
+static volatile bool sWifiUiScanRequested = false;
+static volatile bool sWifiUiConnectRequested = false;
+static lv_obj_t *sWifiKeyboard = nullptr;
+static lv_obj_t *sWifiSsidTa = nullptr;
+static lv_obj_t *sWifiPassTa = nullptr;
+static lv_obj_t *sWifiStatusLabel = nullptr;
+
+static void wifi_ta_focus_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) != LV_EVENT_FOCUSED || !sWifiKeyboard)
+    return;
+  lv_obj_t *ta = lv_event_get_target(e);
+  lv_keyboard_set_textarea(sWifiKeyboard, ta);
+}
+
+static void wifi_btn_scan_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    sWifiUiScanRequested = true;
+}
+
+static void wifi_btn_connect_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    sWifiUiConnectRequested = true;
+}
+
+static void wifi_btn_cancel_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    sWifiUiDone = true;
+}
 
 static void enterWifiSetupMode() {
   ensurePrefsOpen();
-  String storedSsid = gPrefsOpen ? gPrefs.getString(NVS_KEY_WIFI_SSID, "") : "";
-
-  NimBLEDevice::init(BLE_EXPORT_DEV_NAME);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P9);
-  NimBLEServer *server = NimBLEDevice::createServer();
-  server->setCallbacks(&sExportServerCbs, false);
-  NimBLEService *svc = server->createService(BLE_EXPORT_SVC_UUID);
-  sExportTx =
-      svc->createCharacteristic(BLE_EXPORT_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
-  NimBLECharacteristic *rx =
-      svc->createCharacteristic(BLE_EXPORT_RX_UUID, NIMBLE_PROPERTY::WRITE);
-  rx->setCallbacks(&sExportRxCbs);
-  svc->start();
-  {
-    NimBLEAdvertising *adv = NimBLEDevice::getAdvertising();
-    adv->addServiceUUID(BLE_EXPORT_SVC_UUID);
-    adv->setScanResponse(
-        true); // respond to scan requests so name appears in all scanners
-    adv->start();
+  char ssidBuf[64] = {0};
+  char passBuf[64] = {0};
+  if (gPrefsOpen) {
+    String s = gPrefs.getString(NVS_KEY_WIFI_SSID, "");
+    String p = gPrefs.getString(NVS_KEY_WIFI_PASS, "");
+    strlcpy(ssidBuf, s.c_str(), sizeof(ssidBuf));
+    strlcpy(passBuf, p.c_str(), sizeof(passBuf));
   }
 
-  gDisplay.showWifiSetup(gTimeSynced,
-                         storedSsid.length() ? storedSsid.c_str() : nullptr);
-  Serial.println(
-      "[WIFI-SETUP] Advertising as 'Logger'; awaiting WIFI:ssid|pass");
+  Serial.println("[WIFI-SETUP] Entering LVGL WiFi modal");
 
-  while (true) {
-    if (sWifiProvisionRequested) {
-      sWifiProvisionRequested = false;
-      int sep = sWifiProvisionPayload.indexOf('|');
-      if (sep <= 0) {
-        gDisplay.showBoot("WiFi setup:\nBad payload format");
+  sWifiUiDone = false;
+  sWifiUiScanRequested = false;
+  sWifiUiConnectRequested = false;
+
+  lv_obj_t *modal = lv_obj_create(lv_layer_top());
+  lv_obj_set_size(modal, 780, 470);
+  lv_obj_center(modal);
+  lv_obj_set_style_bg_color(modal, lv_color_hex(0x0F0F0F), 0);
+  lv_obj_set_style_bg_opa(modal, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_color(modal, lv_color_hex(0x2A2A2A), 0);
+  lv_obj_set_style_border_width(modal, 1, 0);
+  lv_obj_set_style_radius(modal, 4, 0);
+  lv_obj_set_style_pad_all(modal, 0, 0);
+
+  lv_obj_t *title = lv_label_create(modal);
+  lv_label_set_text(title, "WiFi Setup");
+  lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
+  lv_obj_set_style_text_color(title, lv_color_hex(0xF2F2F2), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 16, 8);
+
+  lv_obj_t *ssidLbl = lv_label_create(modal);
+  lv_label_set_text(ssidLbl, "SSID");
+  lv_obj_set_style_text_color(ssidLbl, lv_color_hex(0x808080), 0);
+  lv_obj_align(ssidLbl, LV_ALIGN_TOP_LEFT, 18, 48);
+
+  sWifiSsidTa = lv_textarea_create(modal);
+  lv_obj_set_size(sWifiSsidTa, 740, 40);
+  lv_obj_align(sWifiSsidTa, LV_ALIGN_TOP_LEFT, 18, 66);
+  lv_textarea_set_one_line(sWifiSsidTa, true);
+  lv_textarea_set_text(sWifiSsidTa, ssidBuf);
+  lv_obj_add_event_cb(sWifiSsidTa, wifi_ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+  lv_obj_t *passLbl = lv_label_create(modal);
+  lv_label_set_text(passLbl, "Password");
+  lv_obj_set_style_text_color(passLbl, lv_color_hex(0x808080), 0);
+  lv_obj_align(passLbl, LV_ALIGN_TOP_LEFT, 18, 114);
+
+  sWifiPassTa = lv_textarea_create(modal);
+  lv_obj_set_size(sWifiPassTa, 740, 40);
+  lv_obj_align(sWifiPassTa, LV_ALIGN_TOP_LEFT, 18, 132);
+  lv_textarea_set_one_line(sWifiPassTa, true);
+  lv_textarea_set_password_mode(sWifiPassTa, true);
+  lv_textarea_set_text(sWifiPassTa, passBuf);
+  lv_obj_add_event_cb(sWifiPassTa, wifi_ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
+
+  lv_obj_t *btnScan = lv_btn_create(modal);
+  lv_obj_set_size(btnScan, 120, 36);
+  lv_obj_align(btnScan, LV_ALIGN_TOP_LEFT, 18, 182);
+  lv_obj_add_event_cb(btnScan, wifi_btn_scan_cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *btnScanLbl = lv_label_create(btnScan);
+  lv_label_set_text(btnScanLbl, "SCAN");
+  lv_obj_center(btnScanLbl);
+
+  lv_obj_t *btnConnect = lv_btn_create(modal);
+  lv_obj_set_size(btnConnect, 160, 36);
+  lv_obj_align(btnConnect, LV_ALIGN_TOP_LEFT, 150, 182);
+  lv_obj_set_style_bg_color(btnConnect, lv_color_hex(UI_COLOR_GREEN), 0);
+  lv_obj_set_style_text_color(btnConnect, lv_color_hex(0x0A0A0A), 0);
+  lv_obj_add_event_cb(btnConnect, wifi_btn_connect_cb, LV_EVENT_CLICKED,
+                      nullptr);
+  lv_obj_t *btnConnLbl = lv_label_create(btnConnect);
+  lv_label_set_text(btnConnLbl, "CONNECT");
+  lv_obj_center(btnConnLbl);
+
+  lv_obj_t *btnCancel = lv_btn_create(modal);
+  lv_obj_set_size(btnCancel, 120, 36);
+  lv_obj_align(btnCancel, LV_ALIGN_TOP_LEFT, 322, 182);
+  lv_obj_add_event_cb(btnCancel, wifi_btn_cancel_cb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t *btnCancelLbl = lv_label_create(btnCancel);
+  lv_label_set_text(btnCancelLbl, "CANCEL");
+  lv_obj_center(btnCancelLbl);
+
+  sWifiStatusLabel = lv_label_create(modal);
+  lv_label_set_text(sWifiStatusLabel, "Tap SCAN to find WiFi, then CONNECT");
+  lv_obj_set_style_text_color(sWifiStatusLabel, lv_color_hex(0x808080), 0);
+  lv_obj_set_width(sWifiStatusLabel, 740);
+  lv_obj_align(sWifiStatusLabel, LV_ALIGN_TOP_LEFT, 18, 226);
+
+  sWifiKeyboard = lv_keyboard_create(modal);
+  lv_obj_set_size(sWifiKeyboard, 740, 220);
+  lv_obj_align(sWifiKeyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_keyboard_set_textarea(sWifiKeyboard, sWifiSsidTa);
+
+  bool success = false;
+  while (!sWifiUiDone) {
+    lv_timer_handler();
+
+    if (sWifiUiScanRequested) {
+      sWifiUiScanRequested = false;
+      lv_label_set_text(sWifiStatusLabel, "Scanning...");
+      lv_timer_handler();
+
+      gBle.pauseForWifi();
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_STA);
+      WiFi.persistent(false);
+      int n = WiFi.scanNetworks();
+      if (n <= 0) {
+        lv_label_set_text(sWifiStatusLabel, "No networks found");
       } else {
-        String ssid = sWifiProvisionPayload.substring(0, sep);
-        String pass = sWifiProvisionPayload.substring(sep + 1);
-        ssid.trim();
-        pass.trim();
-        if (ssid.length() == 0) {
-          gDisplay.showBoot("WiFi setup:\nSSID required");
-        } else {
+        int best = 0;
+        for (int i = 1; i < n; i++) {
+          if (WiFi.RSSI(i) > WiFi.RSSI(best))
+            best = i;
+        }
+        String bestSsid = WiFi.SSID(best);
+        lv_textarea_set_text(sWifiSsidTa, bestSsid.c_str());
+        char msg[96];
+        snprintf(msg, sizeof(msg), "Found %d networks; selected strongest", n);
+        lv_label_set_text(sWifiStatusLabel, msg);
+      }
+      WiFi.scanDelete();
+    }
+
+    if (sWifiUiConnectRequested) {
+      sWifiUiConnectRequested = false;
+      const char *ssid = lv_textarea_get_text(sWifiSsidTa);
+      const char *pass = lv_textarea_get_text(sWifiPassTa);
+      if (!ssid || strlen(ssid) == 0) {
+        lv_label_set_text(sWifiStatusLabel, "SSID is required");
+      } else {
+        lv_label_set_text(sWifiStatusLabel, "Connecting...");
+        lv_timer_handler();
+
+        gBle.pauseForWifi();
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_STA);
+        WiFi.persistent(false);
+        WiFi.begin(ssid, pass);
+
+        uint32_t deadline = millis() + (uint32_t)WIFI_TIMEOUT_S * 1000UL;
+        while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
+          lv_timer_handler();
+          delay(100);
+        }
+
+        if (WiFi.status() == WL_CONNECTED) {
           if (gPrefsOpen) {
             gPrefs.putString(NVS_KEY_WIFI_SSID, ssid);
             gPrefs.putString(NVS_KEY_WIFI_PASS, pass);
-            Serial.printf("[NVS] Saved WiFi SSID: %s\n", ssid.c_str());
           }
-          gDisplay.showBoot("WiFi setup:\nSyncing time...");
-          gTimeSynced =
-              syncTimeViaNtp(ssid.c_str(), pass.c_str(), WIFI_TIMEOUT_S);
-          if (gTimeSynced) {
-            bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_OK_TIME_SYNCED",
-                                19);
-            gDisplay.showBoot("WiFi setup:\nSaved & time synced!\nTap to exit");
-          } else {
-            bleExportSendPacket(0x7E, (const uint8_t *)"WIFI_SAVED_TIME_FAIL",
-                                20);
-            gDisplay.showBoot("WiFi setup:\nSaved, sync failed\nTap to exit");
-          }
-          delay(2000);
-          ESP.restart();
+          ui_set_boot_network(ssid);
+          bool synced = syncTimeViaNtp(ssid, pass, WIFI_TIMEOUT_S);
+          lv_label_set_text(sWifiStatusLabel,
+                            synced ? "Saved + time synced"
+                                   : "Saved (time sync failed)");
+          success = true;
+          sWifiUiDone = true;
+        } else {
+          lv_label_set_text(sWifiStatusLabel, "Connection failed");
+          WiFi.disconnect(true);
+          WiFi.mode(WIFI_OFF);
         }
       }
-      delay(900);
-      gDisplay.showWifiSetup(
-          gTimeSynced, storedSsid.length() ? storedSsid.c_str() : nullptr);
     }
 
-    if (consumeTouchPress()) {
-      ESP.restart();
-    }
-    delay(40);
+    delay(20);
   }
+
+  lv_obj_del(modal);
+  sWifiKeyboard = nullptr;
+  sWifiSsidTa = nullptr;
+  sWifiPassTa = nullptr;
+  sWifiStatusLabel = nullptr;
+  ui_set_state(UIState::BOOT);
+  if (success)
+    delay(250);
 }
 
 static bool prepareExportFs() {
-  gDisplay.showBoot("Export: mount FAT...");
+  ui_set_boot_status("Export: mount FAT...", 0);
   Serial.println("[Export] Mounting FFat");
   if (!FFat.begin(true)) {
-    gDisplay.showBoot("Export: FAT mount FAIL");
+    ui_set_boot_status("Export: FAT mount FAIL", 0);
     Serial.println("[Export] ERROR: FFat.begin(true) failed");
     return false;
   }
@@ -561,7 +710,7 @@ static bool prepareExportFs() {
   // Marker file proves the volume is valid even before any CSV session exists.
   File marker = FFat.open("/EXPORT_OK.TXT", FILE_WRITE);
   if (!marker) {
-    gDisplay.showBoot("Export: marker FAIL");
+    ui_set_boot_status("Export: marker FAIL", 0);
     Serial.println("[Export] ERROR: cannot create /EXPORT_OK.TXT");
     FFat.end();
     return false;
@@ -575,22 +724,22 @@ static bool prepareExportFs() {
 }
 
 static void enterExportMode() {
-  gDisplay.showBoot("Export: find FAT...");
+  ui_set_boot_status("Export: find FAT...", 0);
   Serial.println("[Export] Enter export mode");
 
   // Find the FAT partition by label (subtype = FAT in partitions_8MB.csv)
   sFatPartition = esp_partition_find_first(
       ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_FAT, "ffat");
   if (!sFatPartition) {
-    gDisplay.showBoot("No FAT partition!\nReflash device.");
+    ui_set_boot_status("No FAT partition!\nReflash device.", 0);
     delay(5000);
     ESP.restart();
     return;
   }
-  gDisplay.showBoot("Export: mount WL...");
+  ui_set_boot_status("Export: mount WL...", 0);
   esp_err_t err = wl_mount(sFatPartition, &sWlHandle);
   if (err != ESP_OK) {
-    gDisplay.showBoot("Export: WL mount FAIL");
+    ui_set_boot_status("Export: WL mount FAIL", 0);
     Serial.printf("[Export] ERROR: wl_mount failed (%d)\n", (int)err);
     delay(5000);
     ESP.restart();
@@ -599,7 +748,7 @@ static void enterExportMode() {
   sWlSize = wl_size(sWlHandle);
   sWlSectorSize = wl_sector_size(sWlHandle);
   if (sWlSize == 0 || sWlSectorSize == 0 || (sWlSize % 512u) != 0u) {
-    gDisplay.showBoot("Export: geometry FAIL");
+    ui_set_boot_status("Export: geometry FAIL", 0);
     Serial.printf("[Export] ERROR: bad geometry size=%lu sector=%lu\n",
                   (unsigned long)sWlSize, (unsigned long)sWlSectorSize);
     delay(5000);
@@ -609,7 +758,7 @@ static void enterExportMode() {
   }
   sMscWriteBuf = (uint8_t *)malloc(sWlSectorSize);
   if (!sMscWriteBuf) {
-    gDisplay.showBoot("No RAM for MSC!");
+    ui_set_boot_status("No RAM for MSC!", 0);
     delay(5000);
     teardownMscBackend();
     ESP.restart();
@@ -617,7 +766,7 @@ static void enterExportMode() {
   }
 
   // Configure and start USB MSC (enumerate before USB.begin())
-  gDisplay.showBoot("Export: start USB...");
+  ui_set_boot_status("Export: start USB...", 0);
   sMSC.vendorID("UroFlow");    // max 8 chars
   sMSC.productID("Logger");    // max 16 chars
   sMSC.productRevision("1.0"); // max 4 chars
@@ -627,7 +776,7 @@ static void enterExportMode() {
   sMSC.mediaPresent(true);
   bool mscOk = sMSC.begin(sWlSize / 512u, 512u);
   if (!mscOk) {
-    gDisplay.showBoot("Export: MSC begin FAIL");
+    ui_set_boot_status("Export: MSC begin FAIL", 0);
     Serial.println("[Export] ERROR: sMSC.begin failed");
     delay(5000);
     teardownMscBackend();
@@ -636,7 +785,7 @@ static void enterExportMode() {
   }
   bool usbOk = USB.begin();
   if (!usbOk) {
-    gDisplay.showBoot("Export: USB begin FAIL");
+    ui_set_boot_status("Export: USB begin FAIL", 0);
     Serial.println("[Export] ERROR: USB.begin failed");
     delay(5000);
     teardownMscBackend();
@@ -646,7 +795,7 @@ static void enterExportMode() {
   Serial.printf("[Export] USB MSC started, sectors=%lu\n",
                 (unsigned long)(sWlSize / 512u));
 
-  gDisplay.showMscMode();
+  ui_set_boot_status("USB DRIVE MODE\nConnect to PC/Mac", 0);
 
   // Wait: computer mounts drive, user copies files, tap screen to exit
   while (true) {
@@ -678,6 +827,39 @@ static AppState deriveState() {
   return gBle.isScanning() ? AppState::BLE_SCANNING : AppState::BLE_CONNECTING;
 }
 
+// ── UI Interaction Callbacks
+// ────────────────────────────────────────────────────────
+// Deferred flags — enterWifiSetupMode/enterBleExportMode block in their own
+// lv_timer_handler() loop, which cannot run inside an LVGL event callback
+// (reentrant input reads are skipped). Setting a flag here lets the main
+// loop() call them outside the callback context.
+static volatile bool sDeferWifiSetup = false;
+static volatile bool sDeferBleExport = false;
+
+static void onUiHome() {
+  if (gSession.isActive()) {
+    Serial.println("[UI] Home clicked - Resetting");
+    gSession.reset();
+  } else if (gSession.state() == Session::State::ENDED ||
+             gSession.state() == Session::State::WAITING) {
+    Serial.println("[UI] Home clicked - Acknowledge ended session");
+    gSession.reset();
+  } else if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
+    Serial.println("[UI] Network card clicked - WiFi Setup");
+    sDeferWifiSetup = true;
+  }
+}
+
+static void onUiStart() {
+  if (gBle.isConnected() && gSession.state() == Session::State::IDLE) {
+    Serial.println("[UI] Start clicked - Forcing session");
+    gSession.forceStart();
+  } else if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
+    Serial.println("[UI] Export card clicked - BLE Export");
+    sDeferBleExport = true;
+  }
+}
+
 // ── setup()
 // ───────────────────────────────────────────────────────────────────
 
@@ -693,17 +875,25 @@ void setup() {
   // ── Display init (SPI, no USB dependency) ────────────────────────────────
   gDisplay.begin();
 
+  // ── Build Base LVGL UI ───────────────────────────────────────────────────
+  ui_init();
+  ui_set_home_cb(onUiHome);
+  ui_set_start_cb(onUiStart);
+  lv_timer_handler(); // Force an initial render pass
+
   // ── Initialise touch controller early (handled by Display::begin()) ──
 
   // ── FFat: mount early so we can show file count on boot screen ───────────
   // Partition label "ffat" matches partitions_8MB.csv (subtype=fat).
   // true = format on first use (creates FAT filesystem on blank partition).
-  gDisplay.showBoot("Mounting storage...");
+  ui_set_boot_status("Mounting storage...", 10);
   if (!FFat.begin(true)) {
-    gDisplay.showBoot("Storage ERROR!\nReflash device.");
+    ui_set_boot_status("Storage ERROR!", 0);
     Serial.println("[FS] FFat mount failed");
-    while (true)
-      delay(1000);
+    while (true) {
+      lv_timer_handler();
+      delay(10);
+    }
   }
   Serial.printf("[FS] Free: %lu KB\n",
                 (unsigned long)(FFat.totalBytes() - FFat.usedBytes()) / 1024);
@@ -731,6 +921,12 @@ void setup() {
   ensurePrefsOpen();
   String storedWifiSsid =
       gPrefsOpen ? gPrefs.getString(NVS_KEY_WIFI_SSID, "") : "";
+  if (storedWifiSsid.length() == 0 && strcmp(WIFI_SSID, "YourWiFiSSID") != 0) {
+    storedWifiSsid = WIFI_SSID;
+  }
+  if (storedWifiSsid.length() > 0) {
+    ui_set_boot_network(storedWifiSsid.c_str());
+  }
 
   // ── Boot countdown (10 seconds) ───────────────────────────────────────────
   // NOTE: bleTimeSync_start/stop temporarily disabled — dual-role NimBLE
@@ -738,33 +934,27 @@ void setup() {
   // bleTimeSync_start();
 
   for (int remaining = 10; remaining >= 0; remaining--) {
-    gDisplay.showBootCountdown(remaining, gTimeSynced, csvCount,
-                               storedWifiSsid.length() ? storedWifiSsid.c_str()
-                                                       : nullptr);
+    ui_set_boot_status("System Ready", remaining);
     uint32_t tickStart = millis();
     while (millis() - tickStart < 1000) {
+      lv_timer_handler();
+      // Handle touch routing through LVGL/Display bridge
       int tx = 0, ty = 0;
       if (gDisplay.getTouch(tx, ty)) {
-        delay(120); // debounce
-        int dummyX, dummyY;
-        while (gDisplay.getTouch(dummyX, dummyY))
-          delay(30);
-
-        if (ty >= 105 && ty <= 180) {
-          // BLE EXPORT button (800x480 zone)
-          FFat.end(); // release before BLE export mode remounts
-          gDisplay.showBoot("Opening BLE export...");
-          delay(250);
-          enterBleExportMode(); // does not return
-          return;
-        } else if (ty >= 190 && ty <= 260) {
-          // WIFI SETUP button (800x480 zone)
+        // We can still use raw coordinates for these low-level system traps
+        if (ty >= 105 && ty <= 180) { // BLE EXPORT zone
           FFat.end();
-          enterWifiSetupMode(); // does not return
+          ui_set_boot_status("Export Mode...", 0);
+          enterBleExportMode();
+          return;
+        } else if (ty >= 190 && ty <= 260) { // WIFI SETUP zone
+          FFat.end();
+          ui_set_boot_status("WiFi Setup...", 0);
+          enterWifiSetupMode();
           return;
         }
       }
-      delay(50);
+      delay(20);
     }
     if (remaining == 0)
       break;
@@ -779,12 +969,12 @@ void setup() {
     String wifiPass;
     bool haveWifi = loadWifiCreds(wifiSsid, wifiPass);
     if (haveWifi) {
-      gDisplay.showBoot("Syncing time...");
+      ui_set_boot_status("Syncing time...", 0);
       gTimeSynced =
           syncTimeViaNtp(wifiSsid.c_str(), wifiPass.c_str(), WIFI_TIMEOUT_S);
-      gDisplay.showBoot(gTimeSynced ? "Time OK"
-                                    : "Time FAILED\n(sequential names)");
+      ui_set_boot_status(gTimeSynced ? "Time OK" : "Time FAILED", 0);
       delay(600);
+      lv_timer_handler();
     } else {
       Serial.println("[NTP] No WiFi credentials provisioned");
     }
@@ -800,7 +990,7 @@ void setup() {
   gSession.begin(gTimeSynced, seqNum);
 
   // ── BLE Acaia client init ────────────────────────────────────────────────
-  gDisplay.showBoot("Scanning for\nAcaia scale...");
+  ui_set_boot_status("Scanning...", 0);
   gBle.begin(onWeight, storedMac.length() >= 17 ? storedMac.c_str() : nullptr);
 
   gState = AppState::BLE_SCANNING;
@@ -810,73 +1000,81 @@ void setup() {
 // ── loop()
 // ────────────────────────────────────────────────────────────────────
 
+static void restart_btn_cb(lv_event_t *e) {
+  if (bg_panel) {
+    lv_obj_del(bg_panel);
+    bg_panel = nullptr;
+  }
+  gSession.reset();
+}
+
 void loop() {
+  static uint32_t lastHeartbeat = 0;
+  if (millis() - lastHeartbeat >= 1000) {
+    lastHeartbeat = millis();
+    Serial.print(".");
+  }
+
+  lv_task_handler();
+
+  // Handle deferred mode entries (must run outside LVGL callbacks)
+  if (sDeferWifiSetup) {
+    sDeferWifiSetup = false;
+    enterWifiSetupMode();
+    return;
+  }
+  if (sDeferBleExport) {
+    sDeferBleExport = false;
+    enterBleExportMode();
+    return;
+  }
+
   gBle.tick();
   gSession.tick();
 
-  // If connected but user never starts a measurement, sleep after 30s.
-  static uint32_t connectedIdleStartMs = 0;
-  if (gBle.isConnected() && gSession.state() == Session::State::IDLE) {
-    if (connectedIdleStartMs == 0)
-      connectedIdleStartMs = millis();
-    if (millis() - connectedIdleStartMs >= CONNECT_TO_WEIGHT_TIMEOUT_MS) {
-      gDisplay.showBoot("No weight in 90s.\nSleeping...");
-      delay(1200);
-      digitalWrite(TFT_BL_PIN, LOW);
-      Serial.println("[Sleep] No measurement started, entering deep sleep");
-      Serial.flush();
-      esp_deep_sleep_start();
+  // One-shot welcome countdown: BOOT -> READY preview.
+  static uint32_t bootTickMs = 0;
+  static int bootCountdown = 10;
+  static bool bootIntroDone = false;
+  if (!bootIntroDone && !gBle.isConnected() &&
+      gSession.state() == Session::State::IDLE) {
+    uint32_t now = millis();
+    if (now - bootTickMs >= 1000) {
+      bootTickMs = now;
+      if (bootCountdown > 0) {
+        bootCountdown--;
+      }
+      if (bootCountdown == 0) {
+        bootIntroDone = true;
+      }
     }
-  } else {
-    connectedIdleStartMs = 0;
+    ui_set_boot_status(bootIntroDone ? "TURN ON SCALE" : "CONNECTING TO SCALE",
+                       bootCountdown);
+  } else if (gBle.isConnected()) {
+    bootIntroDone = true;
+  } else if (!bootIntroDone) {
+    bootTickMs = millis();
   }
 
-  // ── Post-session: show success screen then deep sleep ─────────────────────
-  // Checked before deriveState() so we never try to render a normal screen
-  // against an ENDED session.  Deep sleep acts like a hard reset — the next
-  // RESET or power cycle runs setup() fresh.
-  if (gSession.state() == Session::State::ENDED) {
-    gDisplay.showSessionComplete(gSession.endedRowCount(),
-                                 gSession.endedDurationMs());
-    delay(2000); // Show checkmark for 2 seconds
-
-    String savedName = gSession.lastSavedName();
-    bool measurementSaved = savedName.length() > 0;
-
-    if (measurementSaved) {
-      // Trigger Cloud Upload (Google Sheets)
-      gDisplay.showBoot("Cloud Syncing...");
-      int status = gSession.uploadToGoogleSheet(savedName);
-
-      if (status == 1) {
-        gDisplay.showBoot("Cloud Sync OK");
-        delay(2000);
-      } else {
-        char failMsg[64];
-        if (status == 0) {
-          snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(WiFi Timeout)");
-        } else {
-          snprintf(failMsg, sizeof(failMsg), "Cloud Sync FAIL\n(Code: %d)",
-                   status);
-        }
-        gDisplay.showBoot(failMsg);
-        delay(6000); // Extra time to read the error code
-      }
-    } else {
-      gDisplay.showBoot("Measurement too short\nNot saved");
-      delay(2500);
+  // Update UI state based on system status
+  if (gSession.state() == Session::State::UPLOAD) {
+    ui_set_state(UIState::SYNCING);
+  } else if (gSession.state() == Session::State::ENDED ||
+             gSession.state() == Session::State::WAITING) {
+    ui_set_state(UIState::SUCCESS);
+  } else if (gSession.isActive()) {
+    ui_set_state(UIState::ACTIVE);
+    static uint32_t lastWeightUpdate = 0;
+    if (millis() - lastWeightUpdate >= 200) {
+      lastWeightUpdate = millis();
+      ui_update_weight(gSession.lastWeight(), gSession.elapsedSeconds(),
+                       gSession.weightRemovalCountdownSecs(),
+                       (uint32_t)gSession.chartCount());
     }
-
-    // After success checkmark, show summary before sleep
-    gDisplay.showBoot(measurementSaved ? "Measurement Saved"
-                                       : "No file was saved");
-    delay(1500);
-
-    digitalWrite(TFT_BL_PIN, LOW); // backlight off
-    Serial.println("[Sleep] Entering deep sleep");
-    Serial.flush();
-    esp_deep_sleep_start(); // no wakeup source — RESET to wake
-                            // never returns
+  } else if (gBle.isConnected()) {
+    ui_set_state(UIState::READY);
+  } else {
+    ui_set_state(UIState::BOOT);
   }
 
   // Persist MAC once connected
@@ -901,15 +1099,5 @@ void loop() {
   }
 
   gState = deriveState();
-
-  if (millis() - gLastDisplayMs >= DISPLAY_INTERVAL_MS) {
-    gLastDisplayMs = millis();
-    gDisplay.update(gState, gSession.lastWeight(), gSession.isActive(),
-                    gSession.elapsedMs(), gSession.rowCount(), gTimeSynced,
-                    gSession.chartData(), gSession.chartCount(),
-                    gSession.chartHead(),
-                    gSession.weightRemovalCountdownSecs());
-  }
-
-  delay(10);
+  delay(5);
 }

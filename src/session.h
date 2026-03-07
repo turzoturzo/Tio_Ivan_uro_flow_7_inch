@@ -2,11 +2,12 @@
 #include "chart_types.h"
 #include <Arduino.h>
 #include <FFat.h>
+#include <atomic>
 #include <time.h>
 
 class Session {
 public:
-  enum class State { IDLE, ACTIVE, ENDED };
+  enum class State { IDLE, ACTIVE, ENDED, UPLOAD, WAITING };
 
   Session();
 
@@ -19,15 +20,39 @@ public:
   // Call every loop() to check the idle timeout
   void tick();
 
+  // Moves the session from ENDED to WAITING so we don't repeat the end logic
+  void acknowledgeEnded() {
+    if (_state == State::ENDED)
+      _state = State::WAITING;
+  }
+
+  // Reset to IDLE to allow a new measurement
+  void reset() {
+    _state = State::IDLE;
+    _sessionStartMs = 0;
+    _lastWeightMs = millis();
+    _lastSavedName = "";
+  }
+
+  // Manually trigger a session start (Touch override)
+  void forceStart() {
+    if (_state == State::IDLE) {
+      _startSession();
+    }
+  }
+
   // Accessors for display
   State state() const { return _state; }
   bool isActive() const { return _state == State::ACTIVE; }
   uint32_t rowCount() const { return _rowCount; }
   uint32_t elapsedMs() const;
+  uint32_t startTime() const { return _sessionStartMs; }
   float lastWeight() const { return _lastWeight; }
   int weightRemovalCountdownSecs() const;
   uint32_t seqNum() const { return _seqNum; }
   String lastSavedName() const { return _lastSavedName; }
+  float cumulativeWeight() const { return _cumulativeWeight; }
+  uint32_t elapsedSeconds() const { return elapsedMs() / 1000; }
   int uploadToGoogleSheet(const String &path);
 
   // Accessors for post-session summary (valid when state() == ENDED)
@@ -45,6 +70,7 @@ private:
   void _flushBuffer();
   void _writeHeader();
   String _buildFilename() const;
+  void _processWeight(float weight_g, uint32_t t_ms_abs);
 
   State _state;
   uint32_t _sessionStartMs;
@@ -69,6 +95,11 @@ private:
   // Captured at session end — valid when state() == ENDED
   uint32_t _endedRowCount;
   uint32_t _endedDurationMs;
+
+  // Thread-safe weight transfer
+  std::atomic<float> _pendingWeight{0.0f};
+  std::atomic<uint32_t> _pendingTime{0};
+  std::atomic<bool> _newWeightPending{false};
 
   // In-memory chart ring buffer (for live display only, not persisted)
   ChartSample _chart[CHART_BUF_SIZE];

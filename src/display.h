@@ -25,8 +25,17 @@ public:
   void showBleExportDeletePrompt(int filesCount);
   void showBleExportDeleted(int deletedCount);
 
-  // WiFi setup mode screen
+  // WiFi setup mode screen (legacy BLE provisioning)
   void showWifiSetup(bool timeSynced, const char *storedSsid = nullptr);
+
+  // WiFi on-screen keyboard
+  void drawWifiKeyboard(const char *ssid, const char *pass,
+                        int activeField, bool shifted,
+                        const char *status = nullptr);
+  void drawWifiKeys(bool shifted);
+  void updateWifiField(int field, const char *text, bool active);
+  void updateWifiStatus(const char *status, uint16_t color);
+  char mapWifiKeyTouch(int x, int y, bool shifted);
 
   // Post-session success screen (shown before deep sleep)
   void showSessionComplete(uint32_t rowCount, uint32_t durationMs);

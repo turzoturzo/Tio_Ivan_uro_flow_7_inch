@@ -7,7 +7,7 @@
 using WeightCallback = std::function<void(float weight_g, uint32_t t_ms)>;
 
 class BleAcaia : public NimBLEClientCallbacks,
-                 public NimBLEAdvertisedDeviceCallbacks {
+                 public NimBLEScanCallbacks {
 public:
     BleAcaia();
 
@@ -25,11 +25,14 @@ public:
     // Write the last-connected MAC into out_buf (must be >= 38 bytes)
     void getLastMac(char* out_buf, size_t len) const;
 
+    // Stop scanning/connecting so WiFi can use the radio; tick() auto-resumes
+    void pauseForWifi();
+
 private:
     // ── NimBLE callbacks ──────────────────────────────────────────────────
     void onConnect(NimBLEClient* client) override;
-    void onDisconnect(NimBLEClient* client) override;
-    void onResult(NimBLEAdvertisedDevice* device) override; // scan result
+    void onDisconnect(NimBLEClient* client, int reason) override;
+    void onResult(const NimBLEAdvertisedDevice* device) override; // scan result
 
     // ── Internal helpers ─────────────────────────────────────────────────
     void _startScan();

@@ -1,6 +1,6 @@
 #include "display.h"
 #include "config.h"
-#include "main.h" // AppState enum
+#include "main.h" // For AppState definitions
 #include <Arduino.h>
 #include <Arduino_DataBus.h>
 #include <Wire.h>
@@ -8,6 +8,29 @@
 #include <esp_heap_caps.h>
 #include <esp_lcd_panel_ops.h>
 #include <initGT911.h>
+#include <lvgl.h>
+
+// LVGL driver callbacks
+static void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area,
+                          lv_color_t *color_p) {
+  uint32_t w = (area->x2 - area->x1 + 1);
+  uint32_t h = (area->y2 - area->y1 + 1);
+  Arduino_GFX *gfx = (Arduino_GFX *)disp_drv->user_data;
+  gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)&color_p->full, w, h);
+  lv_disp_flush_ready(disp_drv);
+}
+
+static void my_touch_read(lv_indev_drv_t *indev_drv, lv_indev_data_t *data) {
+  Display *disp = (Display *)indev_drv->user_data;
+  int x, y;
+  if (disp->getTouch(x, y)) {
+    data->state = LV_INDEV_STATE_PR;
+    data->point.x = x;
+    data->point.y = y;
+  } else {
+    data->state = LV_INDEV_STATE_REL;
+  }
+}
 
 // ── Display ──────────────────────────────────────────────────────────
 // We use the stock Arduino_RGB_Display. The previous 'FixedRGBDisplay' hack
@@ -39,9 +62,9 @@ static void ch422g_write(uint8_t addr, uint8_t data) {
 #define COL_BTN_ORANGE 0x18C3 // warm amber (BLE export button)
 #define COL_BTN_BLUE 0x24BE   // medium blue (WiFi setup button)
 
-// ── Normal-screen layout (800×480 portrait)
+// ── Normal-screen layout (800×480 landscape)
 // ───────────────────────────────────
-#define TITLE_Y 8
+#define TITLE_Y 12
 #define ROW1_Y 105 // 70 * 1.5
 #define ROW2_Y 177 // 118 * 1.5
 #define ROW3_Y 249 // 166 * 1.5
@@ -51,16 +74,16 @@ static void ch422g_write(uint8_t addr, uint8_t data) {
 // ── Session-screen layout
 // ─────────────────────────────────────────────────────
 #define SESS_HDR_H 58 // header area height
-#define CHART_X 5
-#define CHART_Y 62
-#define CHART_W 230
-#define CHART_H 214                         // y=62..275
-#define CHART_Y_END (CHART_Y + CHART_H - 1) // 275
-#define AXIS_Y 280
+#define CHART_X 200
+#define CHART_Y 80
+#define CHART_W 580
+#define CHART_H 340                         // y=80..419
+#define CHART_Y_END (CHART_Y + CHART_H - 1) // 419
+#define AXIS_Y 430
 
 // ── Boot-screen button zones (used by main.cpp for touch routing)
-// ───────────── BLE EXPORT button: y=105..180   // scaled from 80..150 WIFI
-// SETUP button: y=190..260   // scaled from 158..218
+// ───────────── BLE EXPORT button: y=105..180
+// SETUP button: y=190..260
 
 Display::Display()
     : _gfx(nullptr), _touch(nullptr), _lastState(static_cast<AppState>(-1)),
@@ -131,26 +154,18 @@ void Display::begin() {
       2 /* R1 */, 42 /* R2 */, 41 /* R3 */, 40 /* R4 */, 39 /* G0 */,
       0 /* G1 */, 45 /* G2 */, 48 /* G3 */, 47 /* G4 */, 21 /* G5 */,
       14 /* B0 */, 38 /* B1 */, 18 /* B2 */, 17 /* B3 */, 10 /* B4 */,
-      0 /* hsync_p */, 40 /* h_fp */, 48 /* h_pw */, 40 /* h_bp */,
-      0 /* vsync_p */, 13 /* v_fp */, 3 /* v_pw */, 32 /* v_bp */,
-      1 /* pclk_active_neg */, 8000000 /* prefer_speed */);
+      0 /* hsync_p */, 8 /* h_fp */, 4 /* h_pw */, 8 /* h_bp */,
+      0 /* vsync_p */, 16 /* v_fp */, 4 /* v_pw */, 16 /* v_bp */,
+      1 /* pclk_active_neg */, 16000000 /* prefer_speed */,
+      false /* useBigEndian */, 0 /* de_idle_high */, 0 /* pclk_idle_high */,
+      800 * 10 /* bounce_buffer_size_px = 10 lines */);
 #else
 #error "Unsupported RGB_PANEL_PROFILE"
 #endif
 
-  // Soft Start: Backlight stays OFF for now to save power during init
-  // Assuming CH422G_ADDR_WR with bit 0 controls backlight.
-  // 0x1E (00011110) would turn off bit 0, keeping others high.
-  // 0x1F (00011111) would turn on bit 0, keeping others high.
-  // This is a guess based on the user's provided values.
-  // Original code used 0xFF for backlight on, 0x00 for off.
-  // For safety, let's use 0xFE (all high except bit 0) for off, and 0xFF for
-  // on.
-  ch422g_write(CH422G_ADDR_WR, 0xFE); // Backlight LOW (assuming bit 0 is BL)
-
   Serial.printf("[DISPLAY] PSRAM Size: %ld KB\n",
                 (long)(ESP.getPsramSize() / 1024));
-  Serial.println("[DISPLAY] Starting RGB GFX (Soft Start)...");
+  Serial.println("[DISPLAY] Starting RGB GFX...");
 
   _gfx = new Arduino_RGB_Display(800, 480, rgbpanel, 0, false);
   yield();
@@ -161,26 +176,65 @@ void Display::begin() {
   }
   yield();
 
-  // Color probe
-  _gfx->fillScreen(0xF800); // Red
-
-  // NOW turn on backlight
-  ch422g_write(CH422G_ADDR_WR, 0xFF); // Backlight HIGH
-
-  delay(300);
-  _gfx->fillScreen(0x07E0); // Green
-  delay(300);
-  _gfx->fillScreen(0x001F); // Blue
-  delay(300);
   _gfx->fillScreen(COL_BG);
 
-  _touch = new initGT911(&Wire, GT911_I2C_ADDR_BA);
+  // Re-initialize I2C after RGB panel init.
+  // esp_lcd_new_rgb_panel() invalidates the I2C bus state via the IDF 5.x
+  // peripheral manager, causing all subsequent i2cWrite() calls to return
+  // ESP_ERR_INVALID_STATE.  Calling Wire.end() + Wire.begin() resets the
+  // driver and restores normal I2C operation for the GT911 touch controller.
+  Wire.end();
+  Wire.begin(TOUCH_SDA_PIN, TOUCH_SCL_PIN);
+
+  _touch = new initGT911(&Wire, 0x5D); // Try 0x5D (GT911_I2C_ADDR_BA)
   if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {
-    Serial.println("GT911 init failed!");
+    Serial.println("GT911 init failed on 0x5D! Trying 0x14...");
+    delete _touch;
+    _touch = new initGT911(&Wire, 0x14); // Try 0x14 (GT911_I2C_ADDR_28)
+    if (!_touch->begin(TOUCH_INT_PIN, TOUCH_RST_PIN)) {
+      Serial.println("GT911 init failed on 0x14 too! Touch is disabled.");
+      delete _touch;
+      _touch = nullptr;
+    } else {
+      Serial.println("GT911 init success on 0x14");
+    }
+  } else {
+    Serial.println("GT911 init success on 0x5D");
   }
 
-  _drawTitle();
-  _gfx->flush();
+  // ── LVGL Init ─────────────────────────────────────────────────────────────
+  lv_init();
+
+  // Draw buffer in PSRAM (e.g. 1/10th of screen size = 800 * 48 * 2 bytes =
+  // ~76KB)
+  size_t buf_size = 800 * 48;
+  lv_color_t *buf = (lv_color_t *)heap_caps_malloc(
+      buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  if (!buf) {
+    Serial.println("[LVGL] PSRAM allocation failed! Falling back to SRAM");
+    buf = (lv_color_t *)malloc(buf_size * sizeof(lv_color_t));
+  }
+
+  static lv_disp_draw_buf_t draw_buf;
+  lv_disp_draw_buf_init(&draw_buf, buf, NULL, buf_size);
+
+  static lv_disp_drv_t disp_drv;
+  lv_disp_drv_init(&disp_drv);
+  disp_drv.hor_res = 800;
+  disp_drv.ver_res = 480;
+  disp_drv.flush_cb = my_disp_flush;
+  disp_drv.draw_buf = &draw_buf;
+  disp_drv.user_data = _gfx;
+  lv_disp_drv_register(&disp_drv);
+
+  static lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_POINTER;
+  indev_drv.read_cb = my_touch_read;
+  indev_drv.user_data = this;
+  lv_indev_drv_register(&indev_drv);
+
+  Serial.println("[LVGL] Initialization complete");
 }
 
 bool Display::getTouch(int &x, int &y) {
@@ -454,6 +508,247 @@ void Display::showWifiSetup(bool timeSynced, const char *storedSsid) {
   _gfx->flush();
 }
 
+// ── WiFi on-screen keyboard
+// ─────────────────────────────────────────────────────
+
+// Keyboard layout constants
+#define WK_KEY_W 76
+#define WK_KEY_H 48
+#define WK_GAP 3
+#define WK_ROW_H (WK_KEY_H + WK_GAP + 1) // 52
+#define WK_X0 7                          // keyboard left margin
+#define WK_KB_Y 192                      // first keyboard row top
+#define WK_FIELD_X 100
+#define WK_FIELD_W 690
+#define WK_FIELD_H 38
+#define WK_SSID_Y 50
+#define WK_PASS_Y 100
+#define WK_BTN_Y 146
+#define WK_BTN_H 36
+#define WK_STATUS_X 570
+#define WK_STATUS_W 220
+
+// Keyboard character at (row, col) — special codes:
+//   '\b' = backspace, '\n' = GO/connect, 0x01 = SHIFT, ' ' = space
+static char kbCharAt(int row, int col, bool shifted) {
+  if (row < 0 || row >= 5 || col < 0 || col >= 10)
+    return 0;
+  static const char lo[4][11] = {
+      "1234567890", "qwertyuiop",
+      "asdfghjkl", // 9 chars; col 9 = backspace
+      "zxcvbnm.-"  // 9 chars; col 0 = shift prefix
+  };
+  static const char hi[4][11] = {"!@#$%^&*()", "QWERTYUIOP", "ASDFGHJKL",
+                                 "ZXCVBNM,_"};
+  if (row == 2) {
+    if (col == 9)
+      return '\b';
+    return shifted ? hi[2][col] : lo[2][col];
+  }
+  if (row == 3) {
+    if (col == 0)
+      return 0x01; // shift
+    return shifted ? hi[3][col - 1] : lo[3][col - 1];
+  }
+  if (row == 4) {
+    if (col <= 6)
+      return ' ';
+    if (col == 7)
+      return shifted ? '/' : '?';
+    return '\n'; // GO
+  }
+  return shifted ? hi[row][col] : lo[row][col];
+}
+
+// Draw key label text, centered in key rectangle
+static void drawKeyLabel(Arduino_GFX *gfx, int x, int y, int w, int h,
+                         const char *label, uint16_t fg, uint16_t bg) {
+  int len = strlen(label);
+  int tw = len * 12; // approx width at textSize 2
+  gfx->setTextColor(fg, bg);
+  gfx->setCursor(x + (w - tw) / 2, y + (h - 16) / 2);
+  gfx->setTextSize(2);
+  gfx->print(label);
+}
+
+void Display::drawWifiKeyboard(const char *ssid, const char *pass,
+                               int activeField, bool shifted,
+                               const char *status) {
+  _gfx->fillScreen(COL_BG);
+
+  // Title
+  _gfx->setTextColor(COL_TITLE, COL_BG);
+  _gfx->setCursor(20, 12);
+  _gfx->setTextSize(3);
+  _gfx->print("WiFi Setup");
+
+  // BACK button (top-right)
+  _gfx->fillRoundRect(700, 5, 90, 35, 8, COL_DIMGREY);
+  drawKeyLabel(_gfx, 700, 5, 90, 35, "BACK", COL_WHITE, COL_DIMGREY);
+  // SCAN button (next to BACK)
+  _gfx->fillRoundRect(600, 5, 90, 35, 8, COL_BTN_BLUE);
+  drawKeyLabel(_gfx, 600, 5, 90, 35, "SCAN", COL_WHITE, COL_BTN_BLUE);
+
+  // Field labels
+  _gfx->setTextColor(COL_LABEL, COL_BG);
+  _gfx->setTextSize(2);
+  _gfx->setCursor(10, WK_SSID_Y + 10);
+  _gfx->print("SSID:");
+  _gfx->setCursor(10, WK_PASS_Y + 10);
+  _gfx->print("Pass:");
+
+  // Draw text fields
+  updateWifiField(0, ssid, activeField == 0);
+  updateWifiField(1, pass, activeField == 1);
+
+  // CONNECT button
+  _gfx->fillRoundRect(250, WK_BTN_Y, 300, WK_BTN_H, 10, COL_GREEN);
+  drawKeyLabel(_gfx, 250, WK_BTN_Y, 300, WK_BTN_H, "CONNECT", COL_WHITE,
+               COL_GREEN);
+
+  // Status
+  if (status)
+    updateWifiStatus(status, COL_YELLOW);
+
+  // Keyboard
+  drawWifiKeys(shifted);
+  _gfx->flush();
+}
+
+void Display::drawWifiKeys(bool shifted) {
+  for (int row = 0; row < 5; row++) {
+    int y = WK_KB_Y + row * WK_ROW_H;
+    if (row == 4) {
+      // Row 4: SPACE (keys 0-6), ? (key 7), GO (keys 8-9)
+      int spaceW = 7 * WK_KEY_W + 6 * WK_GAP;
+      _gfx->fillRoundRect(WK_X0, y, spaceW, WK_KEY_H, 6, COL_DIMGREY);
+      drawKeyLabel(_gfx, WK_X0, y, spaceW, WK_KEY_H, "SPACE", COL_WHITE,
+                   COL_DIMGREY);
+
+      int qx = WK_X0 + 7 * (WK_KEY_W + WK_GAP);
+      _gfx->fillRoundRect(qx, y, WK_KEY_W, WK_KEY_H, 6, COL_DIMGREY);
+      char qBuf[2] = {shifted ? '/' : '?', 0};
+      drawKeyLabel(_gfx, qx, y, WK_KEY_W, WK_KEY_H, qBuf, COL_WHITE,
+                   COL_DIMGREY);
+
+      int goX = WK_X0 + 8 * (WK_KEY_W + WK_GAP);
+      int goW = 2 * WK_KEY_W + WK_GAP;
+      _gfx->fillRoundRect(goX, y, goW, WK_KEY_H, 6, COL_GREEN);
+      drawKeyLabel(_gfx, goX, y, goW, WK_KEY_H, "GO", COL_WHITE, COL_GREEN);
+      continue;
+    }
+
+    for (int col = 0; col < 10; col++) {
+      int x = WK_X0 + col * (WK_KEY_W + WK_GAP);
+      char ch = kbCharAt(row, col, shifted);
+      uint16_t bg = COL_DIMGREY;
+      char label[2] = {ch, 0};
+
+      if (ch == '\b') {
+        bg = COL_RED;
+        strcpy(label, "");
+        drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, "DEL", COL_WHITE, bg);
+        _gfx->fillRoundRect(x, y, WK_KEY_W, WK_KEY_H, 6, bg);
+        drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, "DEL", COL_WHITE, bg);
+        continue;
+      }
+      if (ch == 0x01) { // SHIFT
+        bg = shifted ? COL_BTN_BLUE : 0x3186;
+        _gfx->fillRoundRect(x, y, WK_KEY_W, WK_KEY_H, 6, bg);
+        drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, "SH", COL_WHITE, bg);
+        continue;
+      }
+
+      _gfx->fillRoundRect(x, y, WK_KEY_W, WK_KEY_H, 6, bg);
+      drawKeyLabel(_gfx, x, y, WK_KEY_W, WK_KEY_H, label, COL_WHITE, bg);
+    }
+  }
+}
+
+void Display::updateWifiField(int field, const char *text, bool active) {
+  int y = (field == 0) ? WK_SSID_Y : WK_PASS_Y;
+  uint16_t border = active ? COL_YELLOW : COL_DIMGREY;
+  uint16_t fieldBg = 0x1082; // very dark grey
+
+  _gfx->fillRoundRect(WK_FIELD_X, y, WK_FIELD_W, WK_FIELD_H, 6, fieldBg);
+  _gfx->drawRoundRect(WK_FIELD_X, y, WK_FIELD_W, WK_FIELD_H, 6, border);
+
+  _gfx->setTextColor(COL_WHITE, fieldBg);
+  _gfx->setCursor(WK_FIELD_X + 8, y + 11);
+  _gfx->setTextSize(2);
+  if (text && strlen(text) > 0)
+    _gfx->print(text);
+
+  // Blinking-style cursor
+  if (active) {
+    int cx = WK_FIELD_X + 8 + (text ? (int)strlen(text) * 12 : 0);
+    if (cx < WK_FIELD_X + WK_FIELD_W - 8)
+      _gfx->fillRect(cx, y + 8, 2, WK_FIELD_H - 16, COL_YELLOW);
+  }
+}
+
+void Display::updateWifiStatus(const char *status, uint16_t color) {
+  _gfx->fillRect(WK_STATUS_X, WK_BTN_Y, WK_STATUS_W, WK_BTN_H + 40,
+                 COL_BG); // Clear a slightly larger area just in case.
+  _gfx->setTextColor(color, COL_BG);
+  _gfx->setCursor(WK_STATUS_X, WK_BTN_Y + 10);
+  _gfx->setTextSize(2);
+  _gfx->print(status);
+}
+
+char Display::mapWifiKeyTouch(int x, int y, bool shifted) {
+  // BACK button
+  if (y >= 5 && y < 40 && x >= 700)
+    return 0x1B;
+  // SCAN button
+  if (y >= 5 && y < 40 && x >= 600 && x < 690)
+    return 0x04;
+
+  // SSID field
+  if (y >= WK_SSID_Y && y < WK_SSID_Y + WK_FIELD_H && x >= WK_FIELD_X)
+    return 0x02;
+
+  // Password field
+  if (y >= WK_PASS_Y && y < WK_PASS_Y + WK_FIELD_H && x >= WK_FIELD_X)
+    return 0x03;
+
+  // CONNECT button
+  if (y >= WK_BTN_Y && y < WK_BTN_Y + WK_BTN_H && x >= 250 && x < 550)
+    return '\n';
+
+  // Keyboard rows
+  if (y < WK_KB_Y)
+    return 0;
+  int row = (y - WK_KB_Y) / WK_ROW_H;
+  if (row < 0 || row >= 5)
+    return 0;
+
+  // Row 4 special: merged keys
+  if (row == 4) {
+    int spaceEnd = WK_X0 + 7 * (WK_KEY_W + WK_GAP);
+    if (x < spaceEnd)
+      return ' ';
+    int qEnd = WK_X0 + 8 * (WK_KEY_W + WK_GAP);
+    if (x < qEnd)
+      return shifted ? '/' : '?';
+    return '\n'; // GO
+  }
+
+  int col = (x - WK_X0) / (WK_KEY_W + WK_GAP);
+  if (col < 0 || col >= 10)
+    return 0;
+
+  // Verify touch is within key (not in gap)
+  int kx = WK_X0 + col * (WK_KEY_W + WK_GAP);
+  if (x > kx + WK_KEY_W)
+    return 0;
+  int ky = WK_KB_Y + row * WK_ROW_H;
+  if (y > ky + WK_KEY_H)
+    return 0;
+
+  return kbCharAt(row, col, shifted);
+}
+
 // ── Post-session success screen
 // ───────────────────────────────────────────────
 
@@ -598,11 +893,11 @@ void Display::_drawSessionScreen(bool firstFrame, float weight_g,
   if (firstFrame) {
     _gfx->fillScreen(COL_SESSION_BG);
     // Static separator
-    _gfx->drawFastHLine(0, SESS_HDR_H, 240, COL_DIMGREY);
+    _gfx->drawFastHLine(0, SESS_HDR_H, 800, COL_DIMGREY);
   }
 
   // ── Weight value (Font 4 × size 2, left, white) ──────────────────────────
-  _gfx->fillRect(0, 0, 195, SESS_HDR_H, COL_SESSION_BG);
+  _gfx->fillRect(0, 0, 500, SESS_HDR_H, COL_SESSION_BG);
 
   _gfx->setTextSize(2);
   _gfx->setTextColor(COL_WHITE, COL_SESSION_BG);
@@ -617,11 +912,12 @@ void Display::_drawSessionScreen(bool firstFrame, float weight_g,
   uint32_t secs = elapsed_ms / 1000;
   char elStr[12];
   snprintf(elStr, sizeof(elStr), "%02lu:%02lu", secs / 60, secs % 60);
-  _gfx->fillRect(196, 0, 44, SESS_HDR_H, COL_SESSION_BG);
+  _gfx->fillRect(600, 0, 200, SESS_HDR_H,
+                 COL_SESSION_BG); // clear top right to bounds
 
   _gfx->setTextColor(COL_LABEL, COL_SESSION_BG);
 
-  _gfx->setCursor(238, 18);
+  _gfx->setCursor(700, 18);
   _gfx->setTextSize(2);
   _gfx->print(elStr);
 
@@ -662,7 +958,7 @@ void Display::_drawSessionScreen(bool firstFrame, float weight_g,
   }
 
   // ── Axis labels ───────────────────────────────────────────────────────────
-  _gfx->fillRect(0, AXIS_Y, 240, 320 - AXIS_Y, COL_SESSION_BG);
+  _gfx->fillRect(0, AXIS_Y, 800, 480 - AXIS_Y, COL_SESSION_BG);
 
   _gfx->setTextColor(COL_LABEL, COL_SESSION_BG);
 
@@ -716,7 +1012,7 @@ void Display::_drawTitle() {
   _gfx->setTextColor(COL_DIMGREY, COL_BG);
   _gfx->setCursor(10, TITLE_Y + 30);
   _gfx->print("v" FW_VERSION);
-  _gfx->drawLine(0, SEP_Y, 240, SEP_Y, COL_DIMGREY);
+  _gfx->drawLine(0, SEP_Y, 800, SEP_Y, COL_DIMGREY);
 }
 
 void Display::_drawLabel(int x, int y, const char *label, const char *value,
