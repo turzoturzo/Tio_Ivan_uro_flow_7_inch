@@ -36,10 +36,14 @@
 #define CONNECT_TO_WEIGHT_TIMEOUT_MS                                           \
   90000UL // after BLE connect, wait this long for first weight
 #define LOG_FLUSH_INTERVAL_MS 2000UL // buffered write flush period
+#define SESSION_START_THRESHOLD_G                                              \
+  50.0f // g — auto-start measurement when weight exceeds this
 #define WEIGHT_REMOVAL_THRESHOLD_G                                             \
-  5.0f // g — weight reading below this = "scale empty"
+  5.0f // g — weight reading below this = "scale empty" (legacy, kept for ref)
+#define SESSION_END_ZERO_G                                                     \
+  1.0f // g — weight at or below this triggers end countdown
 #define WEIGHT_REMOVAL_TIMEOUT_MS                                              \
-  5000UL // ms — sustained below threshold → end session
+  5000UL // ms — sustained at zero after threshold → end session
 
 // ─── Hardware pins ───────────────────────────────────────────────────────────
 #define TOUCH_SDA_PIN 8  // GT911 SDA - Waveshare ESP32-S3-Touch-LCD-7

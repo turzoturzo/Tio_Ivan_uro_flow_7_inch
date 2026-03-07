@@ -41,6 +41,13 @@ public:
     }
   }
 
+  // Manually end an active session (saves data, unlike reset())
+  void forceEnd() {
+    if (_state == State::ACTIVE) {
+      _endSession();
+    }
+  }
+
   // Accessors for display
   State state() const { return _state; }
   bool isActive() const { return _state == State::ACTIVE; }
@@ -91,6 +98,7 @@ private:
   // Weight-removal detection
   uint32_t
       _weightBelowThresholdMs; // 0 = above threshold; millis() when went below
+  bool _hasExceededStartThreshold; // true once weight has gone above SESSION_START_THRESHOLD_G
 
   // Captured at session end — valid when state() == ENDED
   uint32_t _endedRowCount;

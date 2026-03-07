@@ -860,6 +860,13 @@ static void onUiStart() {
   }
 }
 
+static void onUiEnd() {
+  if (gSession.isActive()) {
+    Serial.println("[UI] End clicked - Ending session");
+    gSession.forceEnd();
+  }
+}
+
 // ── setup()
 // ───────────────────────────────────────────────────────────────────
 
@@ -879,6 +886,7 @@ void setup() {
   ui_init();
   ui_set_home_cb(onUiHome);
   ui_set_start_cb(onUiStart);
+  ui_set_end_cb(onUiEnd);
   lv_timer_handler(); // Force an initial render pass
 
   // ── Initialise touch controller early (handled by Display::begin()) ──
@@ -1044,11 +1052,8 @@ void loop() {
       if (bootCountdown > 0) {
         bootCountdown--;
       }
-      if (bootCountdown == 0) {
-        bootIntroDone = true;
-      }
     }
-    ui_set_boot_status(bootIntroDone ? "TURN ON SCALE" : "CONNECTING TO SCALE",
+    ui_set_boot_status(bootCountdown == 0 ? "TURN ON SCALE" : "CONNECTING TO SCALE",
                        bootCountdown);
   } else if (gBle.isConnected()) {
     bootIntroDone = true;

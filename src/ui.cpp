@@ -18,6 +18,7 @@ static lv_obj_t *status_label = nullptr;
 static lv_obj_t *boot_title_label = nullptr;
 static lv_obj_t *boot_count_label = nullptr;
 static lv_obj_t *boot_bar = nullptr;
+static lv_obj_t *boot_seconds_label = nullptr;
 static lv_obj_t *boot_wifi_value = nullptr;
 
 // Active refs
@@ -36,6 +37,7 @@ static lv_obj_t *success_bar = nullptr;
 // Callbacks for main.cpp to handle
 static void (*on_home_clicked)() = nullptr;
 static void (*on_start_clicked)() = nullptr;
+static void (*on_end_clicked)() = nullptr;
 
 static char s_boot_wifi[64] = "MONGOFLO-LAB-5G";
 
@@ -44,6 +46,7 @@ static void clear_refs() {
   boot_title_label = nullptr;
   boot_count_label = nullptr;
   boot_bar = nullptr;
+  boot_seconds_label = nullptr;
   boot_wifi_value = nullptr;
 
   weight_label = nullptr;
@@ -106,6 +109,8 @@ static void event_handler(lv_event_t *e) {
     on_home_clicked();
   } else if (on_start_clicked && lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_2)) {
     on_start_clicked();
+  } else if (on_end_clicked && lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_3)) {
+    on_end_clicked();
   }
 }
 
@@ -116,6 +121,7 @@ static lv_obj_t *create_metric_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y
   lv_obj_t *card = lv_obj_create(parent);
   lv_obj_set_size(card, 350, 108);
   style_surface(card, lv_color_hex(UI_COLOR_CARD), lv_color_hex(UI_COLOR_GRAY));
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_align(card, LV_ALIGN_TOP_LEFT, x, y);
 
   lv_obj_t *icon_bg = lv_obj_create(card);
@@ -124,6 +130,9 @@ static lv_obj_t *create_metric_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y
   lv_obj_set_style_border_width(icon_bg, 0, 0);
   lv_obj_set_style_bg_color(icon_bg, lv_color_hex(0x1A1A1A), 0);
   lv_obj_set_style_bg_opa(icon_bg, LV_OPA_COVER, 0);
+  lv_obj_set_style_pad_all(icon_bg, 0, 0);
+  lv_obj_clear_flag(icon_bg, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(icon_bg, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_align(icon_bg, LV_ALIGN_LEFT_MID, 0, 0);
 
   lv_obj_t *icon = lv_label_create(icon_bg);
@@ -148,23 +157,8 @@ static lv_obj_t *create_metric_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y
     *out_value_label = v;
   }
 
-  // Right-side affordances to match reference: a CTA button on WiFi card,
-  // and a chevron on export card.
-  if (strcmp(title, "CURRENT NETWORK") == 0) {
-    lv_obj_t *btn = lv_obj_create(card);
-    lv_obj_set_size(btn, 118, 44);
-    lv_obj_set_style_radius(btn, 2, 0);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x1A1A1F), 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_align(btn, LV_ALIGN_RIGHT_MID, -8, 0);
-    lv_obj_add_flag(btn, LV_OBJ_FLAG_USER_1);
-    lv_obj_add_event_cb(btn, event_handler, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t *txt = lv_label_create(btn);
-    lv_label_set_text(txt, "CHANGE WIFI");
-    apply_mono_style(txt, lv_color_hex(UI_COLOR_MUTED));
-    lv_obj_center(txt);
-  } else if (strcmp(title, "DATA EXPORT") == 0) {
+  // Right-side chevron on export card
+  if (strcmp(title, "DATA EXPORT") == 0) {
     lv_obj_t *chev = lv_label_create(card);
     lv_label_set_text(chev, LV_SYMBOL_RIGHT);
     lv_obj_set_style_text_font(chev, &lv_font_montserrat_24, 0);
@@ -203,19 +197,6 @@ void ui_set_state(UIState state) {
     apply_mono_style(tag, lv_color_hex(UI_COLOR_MUTED));
     lv_obj_align(tag, LV_ALIGN_TOP_LEFT, 20, 72);
 
-    lv_obj_t *ready = lv_label_create(main_screen);
-    lv_label_set_text(ready, "SYSTEM READY");
-    apply_mono_style(ready, lv_color_hex(UI_COLOR_MUTED));
-    lv_obj_align(ready, LV_ALIGN_TOP_RIGHT, -24, 30);
-
-    lv_obj_t *dot = lv_obj_create(main_screen);
-    lv_obj_set_size(dot, 8, 8);
-    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(dot, lv_color_hex(UI_COLOR_GREEN), 0);
-    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(dot, 0, 0);
-    lv_obj_align(dot, LV_ALIGN_TOP_RIGHT, -140, 35);
-
     lv_obj_t *wifi_card = create_metric_card(main_screen, 20, 116,
                                              "CURRENT NETWORK", s_boot_wifi,
                                              LV_SYMBOL_WIFI, &boot_wifi_value);
@@ -245,10 +226,10 @@ void ui_set_state(UIState state) {
     lv_obj_set_style_text_font(boot_count_label, &lv_font_montserrat_48, 0);
     lv_obj_align(boot_count_label, LV_ALIGN_CENTER, 0, -6);
 
-    lv_obj_t *sec = lv_label_create(countdown);
-    lv_label_set_text(sec, "SECONDS");
-    apply_mono_style(sec, lv_color_hex(UI_COLOR_MUTED));
-    lv_obj_align(sec, LV_ALIGN_CENTER, 0, 56);
+    boot_seconds_label = lv_label_create(countdown);
+    lv_label_set_text(boot_seconds_label, "SECONDS");
+    apply_mono_style(boot_seconds_label, lv_color_hex(UI_COLOR_MUTED));
+    lv_obj_align(boot_seconds_label, LV_ALIGN_CENTER, 0, 56);
 
     boot_bar = lv_bar_create(countdown);
     lv_obj_set_size(boot_bar, 300, 6);
@@ -307,6 +288,7 @@ void ui_set_state(UIState state) {
     lv_obj_set_style_border_color(outer, lv_color_hex(0x11B851), 0);
     lv_obj_set_style_border_width(outer, 4, 0);
     lv_obj_set_style_shadow_width(outer, 0, 0);
+    lv_obj_clear_flag(outer, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_align(outer, LV_ALIGN_CENTER, 0, -120);
 
     lv_obj_t *inner = lv_obj_create(outer);
@@ -314,6 +296,7 @@ void ui_set_state(UIState state) {
     lv_obj_set_style_radius(inner, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(inner, lv_color_hex(UI_COLOR_BLACK), 0);
     lv_obj_set_style_border_width(inner, 0, 0);
+    lv_obj_clear_flag(inner, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_center(inner);
 
     status_label = lv_label_create(main_screen);
@@ -324,14 +307,14 @@ void ui_set_state(UIState state) {
     lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -20);
 
     lv_obj_t *sub = lv_label_create(main_screen);
-    lv_label_set_text(sub, "Add Weight to Scale to Start");
+    lv_label_set_text(sub, "Starts automatically at 50g");
     lv_obj_set_style_text_font(sub, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(sub, lv_color_hex(0x13351F), 0);
     lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(sub, LV_ALIGN_CENTER, 0, 48);
 
     lv_obj_t *tap = lv_label_create(main_screen);
-    lv_label_set_text(tap, "TAP ANYWHERE TO START");
+    lv_label_set_text(tap, "Tap anywhere to begin manually");
     lv_obj_set_style_text_font(tap, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(tap, lv_color_hex(0x1D4E2D), 0);
     lv_obj_align(tap, LV_ALIGN_BOTTOM_MID, 0, -62);
@@ -368,7 +351,7 @@ void ui_set_state(UIState state) {
     lv_obj_set_style_text_color(home, lv_color_hex(UI_COLOR_MUTED), 0);
     lv_obj_center(home);
 
-    create_logo(main_screen, 56, 8, &lv_font_montserrat_24);
+    create_logo(main_screen, 148, 8, &lv_font_montserrat_24);
 
     lv_obj_t *recording = lv_label_create(main_screen);
     lv_label_set_text(recording, "RECORDING");
@@ -404,7 +387,7 @@ void ui_set_state(UIState state) {
     lv_obj_set_size(chart, 776, 362);
     lv_obj_align(chart, LV_ALIGN_BOTTOM_MID, 0, -40);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 1200);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 500);
     lv_chart_set_point_count(chart, CHART_BUF_SIZE);
     lv_chart_set_div_line_count(chart, 6, 8);
     lv_obj_set_style_bg_color(chart, lv_color_hex(0x050505), 0);
@@ -416,6 +399,8 @@ void ui_set_state(UIState state) {
     lv_obj_set_style_radius(chart, 4, 0);
     ser = lv_chart_add_series(chart, lv_color_hex(UI_COLOR_GREEN),
                               LV_CHART_AXIS_PRIMARY_Y);
+    // Initialize all points to NONE to prevent stale buffer rendering as artifacts
+    lv_chart_set_all_value(chart, ser, LV_CHART_POINT_NONE);
 
     points_label = lv_label_create(main_screen);
     lv_label_set_text(points_label, "0 data points");
@@ -423,12 +408,19 @@ void ui_set_state(UIState state) {
     lv_obj_set_style_text_font(points_label, &lv_font_montserrat_14, 0);
     lv_obj_align(points_label, LV_ALIGN_BOTTOM_RIGHT, -20, -12);
 
-    lv_obj_t *sample = lv_label_create(main_screen);
-    lv_label_set_text_fmt(sample, "Sample #%03lu",
-                          (unsigned long)(millis() % 1000));
-    lv_obj_set_style_text_color(sample, lv_color_hex(0x5A5A5A), 0);
-    lv_obj_set_style_text_font(sample, &lv_font_montserrat_14, 0);
-    lv_obj_align(sample, LV_ALIGN_BOTTOM_LEFT, 20, -12);
+    lv_obj_t *end_btn = lv_btn_create(main_screen);
+    lv_obj_set_size(end_btn, 80, 34);
+    lv_obj_set_style_radius(end_btn, 4, 0);
+    lv_obj_set_style_bg_color(end_btn, lv_color_hex(UI_COLOR_DANGER), 0);
+    lv_obj_set_style_border_width(end_btn, 0, 0);
+    lv_obj_align(end_btn, LV_ALIGN_TOP_LEFT, 54, 10);
+    lv_obj_add_flag(end_btn, LV_OBJ_FLAG_USER_3);
+    lv_obj_add_event_cb(end_btn, event_handler, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t *end_lbl = lv_label_create(end_btn);
+    lv_label_set_text(end_lbl, "END");
+    lv_obj_set_style_text_color(end_lbl, lv_color_hex(UI_COLOR_WHITE), 0);
+    lv_obj_set_style_text_font(end_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(end_lbl);
 
     end_overlay = lv_obj_create(main_screen);
     lv_obj_set_size(end_overlay, 776, 362);
@@ -587,7 +579,13 @@ void ui_update_weight(float weight_g, uint32_t elapsed_s, int ending_countdown_s
     lv_label_set_text_fmt(weight_label, "%.1fg", weight_g);
   }
   if (time_label) {
-    lv_label_set_text_fmt(time_label, "%lus", (unsigned long)elapsed_s);
+    if (elapsed_s < 60) {
+      lv_label_set_text_fmt(time_label, "%lus", (unsigned long)elapsed_s);
+    } else {
+      lv_label_set_text_fmt(time_label, "%lu:%02lu",
+                            (unsigned long)(elapsed_s / 60),
+                            (unsigned long)(elapsed_s % 60));
+    }
   }
   if (points_label) {
     lv_label_set_text_fmt(points_label, "%lu data points",
@@ -614,25 +612,36 @@ void ui_set_boot_status(const char *status, int progress_pct) {
   if (boot_title_label && status) {
     lv_label_set_text(boot_title_label, status);
   }
-  if (boot_count_label) {
-    int displayVal = progress_pct;
-    if (displayVal < 0)
-      displayVal = 0;
-    if (displayVal > 99)
-      displayVal = 99;
-    lv_label_set_text_fmt(boot_count_label, "%d", displayVal);
-  }
-  if (boot_bar) {
-    int barVal = progress_pct;
-    if (progress_pct <= 10) {
-      // Countdown mode: 10 -> full bar, 0 -> empty bar.
-      barVal = progress_pct * 10;
+  if (progress_pct > 0) {
+    // Active countdown: show number, SECONDS label, and bar
+    if (boot_count_label) {
+      lv_obj_clear_flag(boot_count_label, LV_OBJ_FLAG_HIDDEN);
+      int displayVal = progress_pct;
+      if (displayVal > 99)
+        displayVal = 99;
+      lv_label_set_text_fmt(boot_count_label, "%d", displayVal);
     }
-    if (barVal < 0)
-      barVal = 0;
-    if (barVal > 100)
-      barVal = 100;
-    lv_bar_set_value(boot_bar, barVal, LV_ANIM_OFF);
+    if (boot_seconds_label) {
+      lv_obj_clear_flag(boot_seconds_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (boot_bar) {
+      lv_obj_clear_flag(boot_bar, LV_OBJ_FLAG_HIDDEN);
+      int barVal = progress_pct * 10;
+      if (barVal > 100)
+        barVal = 100;
+      lv_bar_set_value(boot_bar, barVal, LV_ANIM_OFF);
+    }
+  } else {
+    // Countdown finished: hide number, SECONDS, and bar — title alone is enough
+    if (boot_count_label) {
+      lv_obj_add_flag(boot_count_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (boot_seconds_label) {
+      lv_obj_add_flag(boot_seconds_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (boot_bar) {
+      lv_obj_add_flag(boot_bar, LV_OBJ_FLAG_HIDDEN);
+    }
   }
 }
 
@@ -691,3 +700,4 @@ void ui_set_sync_status(const char *message, bool is_error) {
 
 void ui_set_home_cb(void (*cb)()) { on_home_clicked = cb; }
 void ui_set_start_cb(void (*cb)()) { on_start_clicked = cb; }
+void ui_set_end_cb(void (*cb)()) { on_end_clicked = cb; }

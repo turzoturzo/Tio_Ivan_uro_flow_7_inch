@@ -10,7 +10,8 @@ Session::Session()
     : _state(State::IDLE), _sessionStartMs(0), _sessionStartEpoch(0),
       _lastWeightMs(0), _lastWeight(0.0f), _prevRawWeight(0.0f),
       _cumulativeWeight(0.0f), _rowCount(0), _hasRealTime(false), _seqNum(0),
-      _lastFlushMs(0), _weightBelowThresholdMs(0), _endedRowCount(0),
+      _lastFlushMs(0), _weightBelowThresholdMs(0),
+      _hasExceededStartThreshold(false), _endedRowCount(0),
       _endedDurationMs(0), _chartHead(0), _chartCount(0) {}
 
 void Session::begin(bool hasRealTime, uint32_t seqNum) {
@@ -63,7 +64,8 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
   _lastWeightMs = millis();
 
   if (_state == State::IDLE) {
-    if (weight_g >= WEIGHT_REMOVAL_THRESHOLD_G) {
+    // Auto-start only when weight clearly exceeds the start threshold
+    if (weight_g >= SESSION_START_THRESHOLD_G) {
       _startSession();
     } else {
       return;
@@ -73,12 +75,22 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
   if (_state != State::ACTIVE)
     return;
 
-  if (weight_g < WEIGHT_REMOVAL_THRESHOLD_G) {
-    if (_weightBelowThresholdMs == 0 &&
-        _cumulativeWeight > WEIGHT_REMOVAL_THRESHOLD_G)
+  // Track if weight has crossed the start threshold during this session
+  if (!_hasExceededStartThreshold && weight_g >= SESSION_START_THRESHOLD_G) {
+    _hasExceededStartThreshold = true;
+  }
+
+  // Auto-end countdown: only after threshold was reached, then weight drops to ~0g
+  if (_hasExceededStartThreshold && weight_g <= SESSION_END_ZERO_G) {
+    if (_weightBelowThresholdMs == 0) {
       _weightBelowThresholdMs = millis();
-  } else {
+    }
+  } else if (weight_g > SESSION_END_ZERO_G) {
     _weightBelowThresholdMs = 0;
+  }
+
+  // Track cumulative positive weight deltas (ignores drops / zero / negative)
+  if (weight_g > 0.0f) {
     float delta = weight_g - _prevRawWeight;
     if (delta > 0.05f) {
       _cumulativeWeight += delta;
@@ -147,6 +159,7 @@ void Session::_startSession() {
   _writeBuf = "";
   _lastFlushMs = millis();
   _weightBelowThresholdMs = 0;
+  _hasExceededStartThreshold = false;
   _cumulativeWeight = 0.0f;
   _prevRawWeight = 0.0f;
   _chartHead = 0;

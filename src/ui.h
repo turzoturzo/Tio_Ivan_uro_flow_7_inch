@@ -31,5 +31,6 @@ void ui_set_sync_status(const char *message, bool is_error);
 // Callback registration for interactions
 void ui_set_home_cb(void (*cb)());
 void ui_set_start_cb(void (*cb)());
+void ui_set_end_cb(void (*cb)());
 void ui_set_wifi_submit_cb(void (*cb)(const char *ssid, const char *pass));
 void ui_set_wifi_modal_status(const char *message, bool is_error);
