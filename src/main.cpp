@@ -534,28 +534,29 @@ static void enterWifiSetupMode() {
   sWifiUiConnectRequested = false;
 
   lv_obj_t *modal = lv_obj_create(lv_layer_top());
-  lv_obj_set_size(modal, 760, 440);
+  lv_obj_set_size(modal, 780, 470);
   lv_obj_center(modal);
   lv_obj_set_style_bg_color(modal, lv_color_hex(0x0F0F0F), 0);
   lv_obj_set_style_bg_opa(modal, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(modal, lv_color_hex(0x2A2A2A), 0);
   lv_obj_set_style_border_width(modal, 1, 0);
   lv_obj_set_style_radius(modal, 4, 0);
+  lv_obj_set_style_pad_all(modal, 0, 0);
 
   lv_obj_t *title = lv_label_create(modal);
   lv_label_set_text(title, "WiFi Setup");
   lv_obj_set_style_text_font(title, &lv_font_montserrat_32, 0);
   lv_obj_set_style_text_color(title, lv_color_hex(0xF2F2F2), 0);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 16, 10);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 16, 8);
 
   lv_obj_t *ssidLbl = lv_label_create(modal);
   lv_label_set_text(ssidLbl, "SSID");
   lv_obj_set_style_text_color(ssidLbl, lv_color_hex(0x808080), 0);
-  lv_obj_align(ssidLbl, LV_ALIGN_TOP_LEFT, 18, 62);
+  lv_obj_align(ssidLbl, LV_ALIGN_TOP_LEFT, 18, 48);
 
   sWifiSsidTa = lv_textarea_create(modal);
-  lv_obj_set_size(sWifiSsidTa, 724, 44);
-  lv_obj_align(sWifiSsidTa, LV_ALIGN_TOP_LEFT, 18, 82);
+  lv_obj_set_size(sWifiSsidTa, 740, 40);
+  lv_obj_align(sWifiSsidTa, LV_ALIGN_TOP_LEFT, 18, 66);
   lv_textarea_set_one_line(sWifiSsidTa, true);
   lv_textarea_set_text(sWifiSsidTa, ssidBuf);
   lv_obj_add_event_cb(sWifiSsidTa, wifi_ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
@@ -563,27 +564,27 @@ static void enterWifiSetupMode() {
   lv_obj_t *passLbl = lv_label_create(modal);
   lv_label_set_text(passLbl, "Password");
   lv_obj_set_style_text_color(passLbl, lv_color_hex(0x808080), 0);
-  lv_obj_align(passLbl, LV_ALIGN_TOP_LEFT, 18, 136);
+  lv_obj_align(passLbl, LV_ALIGN_TOP_LEFT, 18, 114);
 
   sWifiPassTa = lv_textarea_create(modal);
-  lv_obj_set_size(sWifiPassTa, 724, 44);
-  lv_obj_align(sWifiPassTa, LV_ALIGN_TOP_LEFT, 18, 156);
+  lv_obj_set_size(sWifiPassTa, 740, 40);
+  lv_obj_align(sWifiPassTa, LV_ALIGN_TOP_LEFT, 18, 132);
   lv_textarea_set_one_line(sWifiPassTa, true);
   lv_textarea_set_password_mode(sWifiPassTa, true);
   lv_textarea_set_text(sWifiPassTa, passBuf);
   lv_obj_add_event_cb(sWifiPassTa, wifi_ta_focus_cb, LV_EVENT_FOCUSED, nullptr);
 
   lv_obj_t *btnScan = lv_btn_create(modal);
-  lv_obj_set_size(btnScan, 120, 38);
-  lv_obj_align(btnScan, LV_ALIGN_TOP_LEFT, 18, 212);
+  lv_obj_set_size(btnScan, 120, 36);
+  lv_obj_align(btnScan, LV_ALIGN_TOP_LEFT, 18, 182);
   lv_obj_add_event_cb(btnScan, wifi_btn_scan_cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *btnScanLbl = lv_label_create(btnScan);
   lv_label_set_text(btnScanLbl, "SCAN");
   lv_obj_center(btnScanLbl);
 
   lv_obj_t *btnConnect = lv_btn_create(modal);
-  lv_obj_set_size(btnConnect, 160, 38);
-  lv_obj_align(btnConnect, LV_ALIGN_TOP_LEFT, 150, 212);
+  lv_obj_set_size(btnConnect, 160, 36);
+  lv_obj_align(btnConnect, LV_ALIGN_TOP_LEFT, 150, 182);
   lv_obj_set_style_bg_color(btnConnect, lv_color_hex(UI_COLOR_GREEN), 0);
   lv_obj_set_style_text_color(btnConnect, lv_color_hex(0x0A0A0A), 0);
   lv_obj_add_event_cb(btnConnect, wifi_btn_connect_cb, LV_EVENT_CLICKED,
@@ -593,8 +594,8 @@ static void enterWifiSetupMode() {
   lv_obj_center(btnConnLbl);
 
   lv_obj_t *btnCancel = lv_btn_create(modal);
-  lv_obj_set_size(btnCancel, 120, 38);
-  lv_obj_align(btnCancel, LV_ALIGN_TOP_LEFT, 322, 212);
+  lv_obj_set_size(btnCancel, 120, 36);
+  lv_obj_align(btnCancel, LV_ALIGN_TOP_LEFT, 322, 182);
   lv_obj_add_event_cb(btnCancel, wifi_btn_cancel_cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *btnCancelLbl = lv_label_create(btnCancel);
   lv_label_set_text(btnCancelLbl, "CANCEL");
@@ -603,12 +604,12 @@ static void enterWifiSetupMode() {
   sWifiStatusLabel = lv_label_create(modal);
   lv_label_set_text(sWifiStatusLabel, "Tap SCAN to find WiFi, then CONNECT");
   lv_obj_set_style_text_color(sWifiStatusLabel, lv_color_hex(0x808080), 0);
-  lv_obj_set_width(sWifiStatusLabel, 724);
-  lv_obj_align(sWifiStatusLabel, LV_ALIGN_TOP_LEFT, 18, 260);
+  lv_obj_set_width(sWifiStatusLabel, 740);
+  lv_obj_align(sWifiStatusLabel, LV_ALIGN_TOP_LEFT, 18, 226);
 
   sWifiKeyboard = lv_keyboard_create(modal);
-  lv_obj_set_size(sWifiKeyboard, 724, 156);
-  lv_obj_align(sWifiKeyboard, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_obj_set_size(sWifiKeyboard, 740, 220);
+  lv_obj_align(sWifiKeyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_keyboard_set_textarea(sWifiKeyboard, sWifiSsidTa);
 
   bool success = false;
@@ -620,6 +621,7 @@ static void enterWifiSetupMode() {
       lv_label_set_text(sWifiStatusLabel, "Scanning...");
       lv_timer_handler();
 
+      gBle.pauseForWifi();
       WiFi.disconnect(true);
       WiFi.mode(WIFI_STA);
       WiFi.persistent(false);
@@ -651,6 +653,7 @@ static void enterWifiSetupMode() {
         lv_label_set_text(sWifiStatusLabel, "Connecting...");
         lv_timer_handler();
 
+        gBle.pauseForWifi();
         WiFi.disconnect(true);
         WiFi.mode(WIFI_STA);
         WiFi.persistent(false);
@@ -826,6 +829,13 @@ static AppState deriveState() {
 
 // ── UI Interaction Callbacks
 // ────────────────────────────────────────────────────────
+// Deferred flags — enterWifiSetupMode/enterBleExportMode block in their own
+// lv_timer_handler() loop, which cannot run inside an LVGL event callback
+// (reentrant input reads are skipped). Setting a flag here lets the main
+// loop() call them outside the callback context.
+static volatile bool sDeferWifiSetup = false;
+static volatile bool sDeferBleExport = false;
+
 static void onUiHome() {
   if (gSession.isActive()) {
     Serial.println("[UI] Home clicked - Resetting");
@@ -834,9 +844,9 @@ static void onUiHome() {
              gSession.state() == Session::State::WAITING) {
     Serial.println("[UI] Home clicked - Acknowledge ended session");
     gSession.reset();
-  } else if (gState == AppState::BOOT) {
+  } else if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
     Serial.println("[UI] Network card clicked - WiFi Setup");
-    enterWifiSetupMode();
+    sDeferWifiSetup = true;
   }
 }
 
@@ -844,9 +854,9 @@ static void onUiStart() {
   if (gBle.isConnected() && gSession.state() == Session::State::IDLE) {
     Serial.println("[UI] Start clicked - Forcing session");
     gSession.forceStart();
-  } else if (gState == AppState::BOOT) {
+  } else if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
     Serial.println("[UI] Export card clicked - BLE Export");
-    enterBleExportMode();
+    sDeferBleExport = true;
   }
 }
 
@@ -1007,6 +1017,18 @@ void loop() {
 
   lv_task_handler();
 
+  // Handle deferred mode entries (must run outside LVGL callbacks)
+  if (sDeferWifiSetup) {
+    sDeferWifiSetup = false;
+    enterWifiSetupMode();
+    return;
+  }
+  if (sDeferBleExport) {
+    sDeferBleExport = false;
+    enterBleExportMode();
+    return;
+  }
+
   gBle.tick();
   gSession.tick();
 
@@ -1026,7 +1048,8 @@ void loop() {
         bootIntroDone = true;
       }
     }
-    ui_set_boot_status("Searching...", bootCountdown);
+    ui_set_boot_status(bootIntroDone ? "TURN ON SCALE" : "CONNECTING TO SCALE",
+                       bootCountdown);
   } else if (gBle.isConnected()) {
     bootIntroDone = true;
   } else if (!bootIntroDone) {
@@ -1044,11 +1067,11 @@ void loop() {
     static uint32_t lastWeightUpdate = 0;
     if (millis() - lastWeightUpdate >= 200) {
       lastWeightUpdate = millis();
-      ui_update_weight(gSession.cumulativeWeight(), gSession.elapsedSeconds(),
+      ui_update_weight(gSession.lastWeight(), gSession.elapsedSeconds(),
                        gSession.weightRemovalCountdownSecs(),
                        (uint32_t)gSession.chartCount());
     }
-  } else if (gBle.isConnected() || bootIntroDone) {
+  } else if (gBle.isConnected()) {
     ui_set_state(UIState::READY);
   } else {
     ui_set_state(UIState::BOOT);

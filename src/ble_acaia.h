@@ -25,6 +25,9 @@ public:
     // Write the last-connected MAC into out_buf (must be >= 38 bytes)
     void getLastMac(char* out_buf, size_t len) const;
 
+    // Stop scanning/connecting so WiFi can use the radio; tick() auto-resumes
+    void pauseForWifi();
+
 private:
     // ── NimBLE callbacks ──────────────────────────────────────────────────
     void onConnect(NimBLEClient* client) override;

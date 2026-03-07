@@ -73,6 +73,14 @@ bool BleAcaia::isScanning() const {
   return _state == State::SCANNING || _state == State::CONNECTING;
 }
 
+void BleAcaia::pauseForWifi() {
+  NimBLEDevice::getScan()->stop();
+  if (_state == State::SCANNING || _state == State::CONNECTING) {
+    _state = State::IDLE;
+  }
+  Serial.println("[BLE] Paused for WiFi");
+}
+
 std::string BleAcaia::getMac() const {
   if (_client && _client->isConnected())
     return _client->getPeerAddress().toString();

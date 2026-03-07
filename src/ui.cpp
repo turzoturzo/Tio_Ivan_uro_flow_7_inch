@@ -141,7 +141,7 @@ static lv_obj_t *create_metric_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y
   lv_label_set_text(v, value);
   lv_obj_set_style_text_color(v, lv_color_hex(UI_COLOR_WHITE), 0);
   lv_obj_set_style_text_font(v, &space_grotesk_24, 0);
-  lv_obj_set_width(v, 160);
+  lv_obj_set_width(v, 120);
   lv_label_set_long_mode(v, LV_LABEL_LONG_DOT);
   lv_obj_align(v, LV_ALIGN_TOP_LEFT, 54, 34);
   if (out_value_label) {
