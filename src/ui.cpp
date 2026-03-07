@@ -150,7 +150,7 @@ static lv_obj_t *create_metric_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y
   lv_label_set_text(v, value);
   lv_obj_set_style_text_color(v, lv_color_hex(UI_COLOR_WHITE), 0);
   lv_obj_set_style_text_font(v, &space_grotesk_24, 0);
-  lv_obj_set_width(v, 120);
+  lv_obj_set_width(v, strcmp(title, "CURRENT NETWORK") == 0 ? 120 : 230);
   lv_label_set_long_mode(v, LV_LABEL_LONG_DOT);
   lv_obj_align(v, LV_ALIGN_TOP_LEFT, 54, 34);
   if (out_value_label) {
@@ -158,7 +158,7 @@ static lv_obj_t *create_metric_card(lv_obj_t *parent, lv_coord_t x, lv_coord_t y
   }
 
   // Right-side chevron on export card
-  if (strcmp(title, "DATA EXPORT") == 0) {
+  if (strcmp(title, "MEASUREMENT") == 0) {
     lv_obj_t *chev = lv_label_create(card);
     lv_label_set_text(chev, LV_SYMBOL_RIGHT);
     lv_obj_set_style_text_font(chev, &lv_font_montserrat_24, 0);
@@ -203,9 +203,9 @@ void ui_set_state(UIState state) {
     lv_obj_add_flag(wifi_card, LV_OBJ_FLAG_USER_1);
 
     lv_obj_t *export_card = create_metric_card(main_screen, 20, 238,
-                                               "DATA EXPORT",
-                                               "Export Files Manually",
-                                               LV_SYMBOL_DOWNLOAD, nullptr);
+                                               "MEASUREMENT",
+                                               "Begin New Measurement",
+                                               LV_SYMBOL_PLAY, nullptr);
     lv_obj_add_flag(export_card, LV_OBJ_FLAG_USER_2);
 
     lv_obj_t *countdown = lv_obj_create(main_screen);
@@ -307,7 +307,8 @@ void ui_set_state(UIState state) {
     lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -20);
 
     lv_obj_t *sub = lv_label_create(main_screen);
-    lv_label_set_text(sub, "Starts automatically at 50g");
+    lv_label_set_text(sub,
+                      "Add weight to the scale\nto begin measurement automatically");
     lv_obj_set_style_text_font(sub, &lv_font_montserrat_32, 0);
     lv_obj_set_style_text_color(sub, lv_color_hex(0x13351F), 0);
     lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
@@ -387,7 +388,7 @@ void ui_set_state(UIState state) {
     lv_obj_set_size(chart, 776, 362);
     lv_obj_align(chart, LV_ALIGN_BOTTOM_MID, 0, -40);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 500);
+    lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 300);
     lv_chart_set_point_count(chart, CHART_BUF_SIZE);
     lv_chart_set_div_line_count(chart, 6, 8);
     lv_obj_set_style_bg_color(chart, lv_color_hex(0x050505), 0);
@@ -568,6 +569,9 @@ void ui_set_state(UIState state) {
     break;
   }
   }
+
+  // Force a full repaint right after structural screen changes.
+  lv_obj_invalidate(main_screen);
 }
 
 void ui_update_weight(float weight_g, uint32_t elapsed_s, int ending_countdown_s,
@@ -663,7 +667,37 @@ void ui_set_sync_status(const char *message, bool is_error) {
     return;
   }
 
+  bool all_digits = false;
+  int seconds = -1;
+  if (success_count_label && message && current_ui_state == UIState::SUCCESS) {
+    size_t n = strlen(message);
+    all_digits = (n > 0);
+    for (size_t i = 0; i < n; ++i) {
+      if (message[i] < '0' || message[i] > '9') {
+        all_digits = false;
+        break;
+      }
+    }
+    seconds = all_digits ? atoi(message) : -1;
+    if (seconds >= 0 && seconds <= 99) {
+      lv_label_set_text_fmt(success_count_label, "%d", seconds);
+      if (success_bar) {
+        // Countdown bar should drain as seconds decrease.
+        int progress = (seconds * 100) / 8;
+        if (progress < 0)
+          progress = 0;
+        if (progress > 100)
+          progress = 100;
+        lv_bar_set_value(success_bar, progress, LV_ANIM_OFF);
+      }
+    }
+  }
+
   if (status_label && message) {
+    // Numeric messages are reserved for countdown updates only.
+    if (current_ui_state == UIState::SUCCESS && all_digits && seconds >= 0) {
+      return;
+    }
     lv_color_t tone = lv_color_hex(UI_COLOR_GREEN);
     if (is_error) {
       tone = lv_color_hex(UI_COLOR_DANGER);
@@ -673,31 +707,9 @@ void ui_set_sync_status(const char *message, bool is_error) {
     lv_label_set_text(status_label, message);
     lv_obj_set_style_text_color(status_label, tone, 0);
   }
-
-  if (success_count_label && message && current_ui_state == UIState::SUCCESS) {
-    size_t n = strlen(message);
-    bool all_digits = (n > 0);
-    for (size_t i = 0; i < n; ++i) {
-      if (message[i] < '0' || message[i] > '9') {
-        all_digits = false;
-        break;
-      }
-    }
-    int seconds = all_digits ? atoi(message) : -1;
-    if (seconds >= 0 && seconds <= 99) {
-      lv_label_set_text_fmt(success_count_label, "%d", seconds);
-      if (success_bar) {
-        int progress = ((8 - seconds) * 100) / 8;
-        if (progress < 0)
-          progress = 0;
-        if (progress > 100)
-          progress = 100;
-        lv_bar_set_value(success_bar, progress, LV_ANIM_OFF);
-      }
-    }
-  }
 }
 
 void ui_set_home_cb(void (*cb)()) { on_home_clicked = cb; }
 void ui_set_start_cb(void (*cb)()) { on_start_clicked = cb; }
 void ui_set_end_cb(void (*cb)()) { on_end_clicked = cb; }
+UIState ui_get_state() { return current_ui_state; }

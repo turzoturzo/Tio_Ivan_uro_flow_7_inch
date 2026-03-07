@@ -17,6 +17,8 @@ static void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area,
   uint32_t h = (area->y2 - area->y1 + 1);
   Arduino_GFX *gfx = (Arduino_GFX *)disp_drv->user_data;
   gfx->draw16bitRGBBitmap(area->x1, area->y1, (uint16_t *)&color_p->full, w, h);
+  // Wait for panel transfer completion before reusing the draw buffer.
+  gfx->flush();
   lv_disp_flush_ready(disp_drv);
 }
 
@@ -208,15 +210,26 @@ void Display::begin() {
   // Draw buffer in PSRAM (e.g. 1/10th of screen size = 800 * 48 * 2 bytes =
   // ~76KB)
   size_t buf_size = 800 * 48;
-  lv_color_t *buf = (lv_color_t *)heap_caps_malloc(
+  lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(
       buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
-  if (!buf) {
+  lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(
+      buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  if (!buf1 || !buf2) {
     Serial.println("[LVGL] PSRAM allocation failed! Falling back to SRAM");
-    buf = (lv_color_t *)malloc(buf_size * sizeof(lv_color_t));
+    if (buf1)
+      heap_caps_free(buf1);
+    if (buf2)
+      heap_caps_free(buf2);
+    buf1 = (lv_color_t *)malloc(buf_size * sizeof(lv_color_t));
+    buf2 = (lv_color_t *)malloc(buf_size * sizeof(lv_color_t));
+  }
+  if (!buf1 || !buf2) {
+    Serial.println("[LVGL] ERROR: draw buffer allocation failed");
+    return;
   }
 
   static lv_disp_draw_buf_t draw_buf;
-  lv_disp_draw_buf_init(&draw_buf, buf, NULL, buf_size);
+  lv_disp_draw_buf_init(&draw_buf, buf1, buf2, buf_size);
 
   static lv_disp_drv_t disp_drv;
   lv_disp_drv_init(&disp_drv);
@@ -225,6 +238,8 @@ void Display::begin() {
   disp_drv.flush_cb = my_disp_flush;
   disp_drv.draw_buf = &draw_buf;
   disp_drv.user_data = _gfx;
+  // Safer on this RGB path: redraw whole frame to avoid transitional artifacts.
+  disp_drv.full_refresh = 1;
   lv_disp_drv_register(&disp_drv);
 
   static lv_indev_drv_t indev_drv;

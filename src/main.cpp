@@ -33,6 +33,7 @@ static bool gPrefsOpen = false;
 
 static uint32_t gLastDisplayMs = 0;
 static const uint32_t DISPLAY_INTERVAL_MS = 200; // 5 Hz
+static const char *SYNC_QUEUE_PATH = "/sync_queue.txt";
 
 // UI handling is now managed by ui.h/ui.cpp
 static lv_obj_t *bg_panel = nullptr;
@@ -207,6 +208,104 @@ static bool loadWifiCreds(String &ssidOut, String &passOut) {
     return true;
   }
   return false;
+}
+
+static int readSyncQueue(String *out, int maxItems) {
+  if (!out || maxItems <= 0)
+    return 0;
+  File f = FFat.open(SYNC_QUEUE_PATH, FILE_READ);
+  if (!f)
+    return 0;
+  int count = 0;
+  while (f.available() && count < maxItems) {
+    String line = f.readStringUntil('\n');
+    line.trim();
+    if (line.length() > 0) {
+      out[count++] = line;
+    }
+  }
+  f.close();
+  return count;
+}
+
+static bool writeSyncQueue(const String *items, int count) {
+  if (FFat.exists(SYNC_QUEUE_PATH)) {
+    FFat.remove(SYNC_QUEUE_PATH);
+  }
+  File f = FFat.open(SYNC_QUEUE_PATH, FILE_WRITE);
+  if (!f)
+    return false;
+  for (int i = 0; i < count; ++i) {
+    if (items[i].length() == 0)
+      continue;
+    f.println(items[i]);
+  }
+  f.close();
+  return true;
+}
+
+static bool queueContains(const String *items, int count, const String &value) {
+  for (int i = 0; i < count; ++i) {
+    if (items[i] == value)
+      return true;
+  }
+  return false;
+}
+
+static void enqueuePendingUpload(const String &path) {
+  if (path.length() == 0)
+    return;
+  static String items[64];
+  int count = readSyncQueue(items, 64);
+  if (queueContains(items, count, path))
+    return;
+  if (count < 64) {
+    items[count++] = path;
+    if (!writeSyncQueue(items, count)) {
+      Serial.println("[Cloud] ERROR: failed to persist sync queue");
+    } else {
+      Serial.printf("[Cloud] Queued for sync: %s\n", path.c_str());
+    }
+  } else {
+    Serial.println("[Cloud] WARNING: sync queue full");
+  }
+}
+
+static void processPendingUploads(bool updateUi) {
+  static String items[64];
+  static String keep[64];
+  int count = readSyncQueue(items, 64);
+  if (count <= 0)
+    return;
+
+  Serial.printf("[Cloud] Pending uploads: %d\n", count);
+  if (updateUi) {
+    ui_set_boot_status("Syncing pending data...", 0);
+  }
+
+  int keepCount = 0;
+  for (int i = 0; i < count; ++i) {
+    const String &path = items[i];
+    if (!FFat.exists(path)) {
+      Serial.printf("[Cloud] Pending file missing, dropping: %s\n", path.c_str());
+      continue;
+    }
+    int rc = gSession.uploadToGoogleSheet(path);
+    if (rc == 1) {
+      Serial.printf("[Cloud] Synced: %s\n", path.c_str());
+    } else {
+      keep[keepCount++] = path;
+      Serial.printf("[Cloud] Keep pending (rc=%d): %s\n", rc, path.c_str());
+      if (rc == 0) {
+        // WiFi failed: stop early and retry remaining files next boot.
+        for (int j = i + 1; j < count && keepCount < 64; ++j) {
+          keep[keepCount++] = items[j];
+        }
+        break;
+      }
+    }
+  }
+  writeSyncQueue(keep, keepCount);
 }
 
 static bool bleExportSendPacket(uint8_t type, const uint8_t *payload,
@@ -493,6 +592,9 @@ static lv_obj_t *sWifiKeyboard = nullptr;
 static lv_obj_t *sWifiSsidTa = nullptr;
 static lv_obj_t *sWifiPassTa = nullptr;
 static lv_obj_t *sWifiStatusLabel = nullptr;
+static lv_obj_t *sWifiList = nullptr;
+static char sWifiScanChoices[16][33];
+static int sWifiScanChoiceCount = 0;
 
 static void wifi_ta_focus_cb(lv_event_t *e) {
   if (lv_event_get_code(e) != LV_EVENT_FOCUSED || !sWifiKeyboard)
@@ -516,6 +618,26 @@ static void wifi_btn_cancel_cb(lv_event_t *e) {
     sWifiUiDone = true;
 }
 
+static void wifi_network_pick_cb(lv_event_t *e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !sWifiSsidTa)
+    return;
+  const char *ssid = (const char *)lv_event_get_user_data(e);
+  if (!ssid || strlen(ssid) == 0)
+    return;
+  lv_textarea_set_text(sWifiSsidTa, ssid);
+  if (sWifiStatusLabel) {
+    lv_label_set_text_fmt(sWifiStatusLabel, "Selected: %s", ssid);
+  }
+}
+
+static void wifi_clear_scan_list() {
+  if (!sWifiList)
+    return;
+  while (lv_obj_get_child_cnt(sWifiList) > 0) {
+    lv_obj_del(lv_obj_get_child(sWifiList, 0));
+  }
+}
+
 static void enterWifiSetupMode() {
   ensurePrefsOpen();
   char ssidBuf[64] = {0};
@@ -532,6 +654,7 @@ static void enterWifiSetupMode() {
   sWifiUiDone = false;
   sWifiUiScanRequested = false;
   sWifiUiConnectRequested = false;
+  sWifiScanChoiceCount = 0;
 
   lv_obj_t *modal = lv_obj_create(lv_layer_top());
   lv_obj_set_size(modal, 780, 470);
@@ -601,14 +724,25 @@ static void enterWifiSetupMode() {
   lv_label_set_text(btnCancelLbl, "CANCEL");
   lv_obj_center(btnCancelLbl);
 
+  sWifiList = lv_list_create(modal);
+  lv_obj_set_size(sWifiList, 740, 110);
+  lv_obj_align(sWifiList, LV_ALIGN_TOP_LEFT, 18, 226);
+  lv_obj_set_style_bg_color(sWifiList, lv_color_hex(0x121212), 0);
+  lv_obj_set_style_border_color(sWifiList, lv_color_hex(0x2A2A2A), 0);
+  lv_obj_set_style_border_width(sWifiList, 1, 0);
+  lv_obj_set_style_radius(sWifiList, 4, 0);
+  lv_obj_set_style_pad_all(sWifiList, 4, 0);
+  lv_obj_set_style_text_color(sWifiList, lv_color_hex(0xF2F2F2), 0);
+
   sWifiStatusLabel = lv_label_create(modal);
-  lv_label_set_text(sWifiStatusLabel, "Tap SCAN to find WiFi, then CONNECT");
+  lv_label_set_text(sWifiStatusLabel,
+                    "Tap SCAN, then choose a network from the list");
   lv_obj_set_style_text_color(sWifiStatusLabel, lv_color_hex(0x808080), 0);
   lv_obj_set_width(sWifiStatusLabel, 740);
-  lv_obj_align(sWifiStatusLabel, LV_ALIGN_TOP_LEFT, 18, 226);
+  lv_obj_align(sWifiStatusLabel, LV_ALIGN_TOP_LEFT, 18, 340);
 
   sWifiKeyboard = lv_keyboard_create(modal);
-  lv_obj_set_size(sWifiKeyboard, 740, 220);
+  lv_obj_set_size(sWifiKeyboard, 740, 118);
   lv_obj_align(sWifiKeyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_keyboard_set_textarea(sWifiKeyboard, sWifiSsidTa);
 
@@ -626,18 +760,26 @@ static void enterWifiSetupMode() {
       WiFi.mode(WIFI_STA);
       WiFi.persistent(false);
       int n = WiFi.scanNetworks();
+      wifi_clear_scan_list();
+      sWifiScanChoiceCount = 0;
       if (n <= 0) {
         lv_label_set_text(sWifiStatusLabel, "No networks found");
       } else {
-        int best = 0;
-        for (int i = 1; i < n; i++) {
-          if (WiFi.RSSI(i) > WiFi.RSSI(best))
-            best = i;
+        for (int i = 0; i < n && sWifiScanChoiceCount < 16; i++) {
+          String ssid = WiFi.SSID(i);
+          if (ssid.length() == 0)
+            continue;
+          strlcpy(sWifiScanChoices[sWifiScanChoiceCount], ssid.c_str(),
+                  sizeof(sWifiScanChoices[sWifiScanChoiceCount]));
+          lv_obj_t *btn =
+              lv_list_add_btn(sWifiList, LV_SYMBOL_WIFI,
+                              sWifiScanChoices[sWifiScanChoiceCount]);
+          lv_obj_add_event_cb(btn, wifi_network_pick_cb, LV_EVENT_CLICKED,
+                              (void *)sWifiScanChoices[sWifiScanChoiceCount]);
+          sWifiScanChoiceCount++;
         }
-        String bestSsid = WiFi.SSID(best);
-        lv_textarea_set_text(sWifiSsidTa, bestSsid.c_str());
         char msg[96];
-        snprintf(msg, sizeof(msg), "Found %d networks; selected strongest", n);
+        snprintf(msg, sizeof(msg), "Found %d networks; tap one to select", n);
         lv_label_set_text(sWifiStatusLabel, msg);
       }
       WiFi.scanDelete();
@@ -693,6 +835,7 @@ static void enterWifiSetupMode() {
   sWifiSsidTa = nullptr;
   sWifiPassTa = nullptr;
   sWifiStatusLabel = nullptr;
+  sWifiList = nullptr;
   ui_set_state(UIState::BOOT);
   if (success)
     delay(250);
@@ -835,28 +978,33 @@ static AppState deriveState() {
 // loop() call them outside the callback context.
 static volatile bool sDeferWifiSetup = false;
 static volatile bool sDeferBleExport = false;
+static volatile bool sForceBootScreen = false;
 
 static void onUiHome() {
-  if (gSession.isActive()) {
-    Serial.println("[UI] Home clicked - Resetting");
-    gSession.reset();
-  } else if (gSession.state() == Session::State::ENDED ||
-             gSession.state() == Session::State::WAITING) {
-    Serial.println("[UI] Home clicked - Acknowledge ended session");
-    gSession.reset();
-  } else if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
-    Serial.println("[UI] Network card clicked - WiFi Setup");
+  if (ui_get_state() == UIState::BOOT) {
+    Serial.println("[UI] WiFi card clicked - WiFi Setup");
     sDeferWifiSetup = true;
+    return;
+  }
+
+  Serial.println("[UI] Home clicked - showing BOOT screen");
+  sForceBootScreen = true;
+  if (gSession.isActive() || gSession.state() == Session::State::ENDED ||
+      gSession.state() == Session::State::WAITING) {
+    gSession.reset();
   }
 }
 
 static void onUiStart() {
+  if (ui_get_state() == UIState::BOOT) {
+    Serial.println("[UI] Begin New Measurement clicked");
+    sForceBootScreen = false;
+  }
   if (gBle.isConnected() && gSession.state() == Session::State::IDLE) {
     Serial.println("[UI] Start clicked - Forcing session");
     gSession.forceStart();
   } else if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
-    Serial.println("[UI] Export card clicked - BLE Export");
-    sDeferBleExport = true;
+    ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE", 10);
   }
 }
 
@@ -936,40 +1084,6 @@ void setup() {
     ui_set_boot_network(storedWifiSsid.c_str());
   }
 
-  // ── Boot countdown (10 seconds) ───────────────────────────────────────────
-  // NOTE: bleTimeSync_start/stop temporarily disabled — dual-role NimBLE
-  // (GATT server + BLE client) crashes on IDF 5.x; re-enable once stable.
-  // bleTimeSync_start();
-
-  for (int remaining = 10; remaining >= 0; remaining--) {
-    ui_set_boot_status("System Ready", remaining);
-    uint32_t tickStart = millis();
-    while (millis() - tickStart < 1000) {
-      lv_timer_handler();
-      // Handle touch routing through LVGL/Display bridge
-      int tx = 0, ty = 0;
-      if (gDisplay.getTouch(tx, ty)) {
-        // We can still use raw coordinates for these low-level system traps
-        if (ty >= 105 && ty <= 180) { // BLE EXPORT zone
-          FFat.end();
-          ui_set_boot_status("Export Mode...", 0);
-          enterBleExportMode();
-          return;
-        } else if (ty >= 190 && ty <= 260) { // WIFI SETUP zone
-          FFat.end();
-          ui_set_boot_status("WiFi Setup...", 0);
-          enterWifiSetupMode();
-          return;
-        }
-      }
-      delay(20);
-    }
-    if (remaining == 0)
-      break;
-  }
-
-  // bleTimeSync_stop();
-
   // ── WiFi NTP (fallback if CTS didn't sync time) ──────────────────────────
   // Credential source order: NVS (provisioned over BLE) -> config.h defaults.
   if (!gTimeSynced) {
@@ -977,12 +1091,9 @@ void setup() {
     String wifiPass;
     bool haveWifi = loadWifiCreds(wifiSsid, wifiPass);
     if (haveWifi) {
-      ui_set_boot_status("Syncing time...", 0);
       gTimeSynced =
           syncTimeViaNtp(wifiSsid.c_str(), wifiPass.c_str(), WIFI_TIMEOUT_S);
-      ui_set_boot_status(gTimeSynced ? "Time OK" : "Time FAILED", 0);
-      delay(600);
-      lv_timer_handler();
+      Serial.printf("[NTP] %s\n", gTimeSynced ? "Time OK" : "Time FAILED");
     } else {
       Serial.println("[NTP] No WiFi credentials provisioned");
     }
@@ -997,8 +1108,11 @@ void setup() {
   // ── Session init ─────────────────────────────────────────────────────────
   gSession.begin(gTimeSynced, seqNum);
 
+  // ── Retry pending cloud syncs from previous failed/interrupted attempts ──
+  processPendingUploads(true);
+
   // ── BLE Acaia client init ────────────────────────────────────────────────
-  ui_set_boot_status("Scanning...", 0);
+  ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE", 10);
   gBle.begin(onWeight, storedMac.length() >= 17 ? storedMac.c_str() : nullptr);
 
   gState = AppState::BLE_SCANNING;
@@ -1017,6 +1131,11 @@ static void restart_btn_cb(lv_event_t *e) {
 }
 
 void loop() {
+  static bool endHandled = false;
+  static uint32_t successCountdownStartMs = 0;
+  static bool successSyncDeferred = false;
+  static bool pendingCloudSync = false;
+  static uint32_t pendingCloudSyncAtMs = 0;
   static uint32_t lastHeartbeat = 0;
   if (millis() - lastHeartbeat >= 1000) {
     lastHeartbeat = millis();
@@ -1040,27 +1159,6 @@ void loop() {
   gBle.tick();
   gSession.tick();
 
-  // One-shot welcome countdown: BOOT -> READY preview.
-  static uint32_t bootTickMs = 0;
-  static int bootCountdown = 10;
-  static bool bootIntroDone = false;
-  if (!bootIntroDone && !gBle.isConnected() &&
-      gSession.state() == Session::State::IDLE) {
-    uint32_t now = millis();
-    if (now - bootTickMs >= 1000) {
-      bootTickMs = now;
-      if (bootCountdown > 0) {
-        bootCountdown--;
-      }
-    }
-    ui_set_boot_status(bootCountdown == 0 ? "TURN ON SCALE" : "CONNECTING TO SCALE",
-                       bootCountdown);
-  } else if (gBle.isConnected()) {
-    bootIntroDone = true;
-  } else if (!bootIntroDone) {
-    bootTickMs = millis();
-  }
-
   // Update UI state based on system status
   if (gSession.state() == Session::State::UPLOAD) {
     ui_set_state(UIState::SYNCING);
@@ -1076,10 +1174,86 @@ void loop() {
                        gSession.weightRemovalCountdownSecs(),
                        (uint32_t)gSession.chartCount());
     }
+  } else if (sForceBootScreen && gSession.state() == Session::State::IDLE) {
+    ui_set_state(UIState::BOOT);
   } else if (gBle.isConnected()) {
     ui_set_state(UIState::READY);
   } else {
     ui_set_state(UIState::BOOT);
+  }
+
+  // Boot status tile behavior (including when BOOT is forced via Home):
+  // countdown should animate only while disconnected+idle on BOOT screen.
+  static bool bootConnectWindowStarted = false;
+  static uint32_t bootConnectStartMs = 0;
+  if (ui_get_state() == UIState::BOOT) {
+    if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
+      if (!bootConnectWindowStarted) {
+        bootConnectWindowStarted = true;
+        bootConnectStartMs = millis();
+      }
+      uint32_t elapsedS = (millis() - bootConnectStartMs) / 1000UL;
+      int remaining = (elapsedS < 10U) ? (int)(10U - elapsedS) : 0;
+      if (remaining > 0) {
+        ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE",
+                           remaining);
+      } else {
+        ui_set_boot_status("UNABLE TO CONNECT SCALE\nRESTART SCALE", 0);
+      }
+    } else {
+      bootConnectWindowStarted = false;
+      ui_set_boot_status(gBle.isConnected() ? "SCALE CONNECTED"
+                                            : "PREPARING TO CONNECT",
+                         0);
+    }
+  } else {
+    bootConnectWindowStarted = false;
+  }
+
+  // Handle upload pipeline exactly once per ended session:
+  // 1) queue locally, 2) attempt sync immediately, 3) keep failed items queued.
+  if (gSession.state() == Session::State::ENDED && !endHandled) {
+    String saved = gSession.lastSavedName();
+    if (saved.length() > 0) {
+      enqueuePendingUpload(saved);
+      // Defer network upload until SUCCESS countdown is complete so UI
+      // transition/render is stable and countdown remains smooth.
+      pendingCloudSync = true;
+      pendingCloudSyncAtMs = millis() + 8000;
+      ui_set_sync_status("Syncing with cloud...", false);
+    }
+    successCountdownStartMs = millis();
+    gSession.acknowledgeEnded();
+    endHandled = true;
+  } else if (gSession.state() == Session::State::IDLE) {
+    endHandled = false;
+    successCountdownStartMs = 0;
+    pendingCloudSync = false;
+    pendingCloudSyncAtMs = 0;
+  }
+
+  if (pendingCloudSync && millis() >= pendingCloudSyncAtMs) {
+    pendingCloudSync = false;
+    processPendingUploads(false);
+    static String q[64];
+    int remaining = readSyncQueue(q, 64);
+    if (remaining == 0) {
+      ui_set_sync_status("Cloud sync complete", false);
+      successSyncDeferred = false;
+    } else {
+      ui_set_sync_status("Cloud sync deferred", true);
+      successSyncDeferred = true;
+    }
+  }
+
+  if ((gSession.state() == Session::State::WAITING ||
+       gSession.state() == Session::State::ENDED) &&
+      successCountdownStartMs > 0) {
+    uint32_t elapsed = (millis() - successCountdownStartMs) / 1000UL;
+    int secs = (elapsed >= 8U) ? 0 : (int)(8U - elapsed);
+    char secBuf[4];
+    snprintf(secBuf, sizeof(secBuf), "%d", secs);
+    ui_set_sync_status(secBuf, successSyncDeferred);
   }
 
   // Persist MAC once connected

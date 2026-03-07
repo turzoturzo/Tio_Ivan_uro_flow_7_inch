@@ -22,6 +22,7 @@ enum class UIState {
 
 void ui_init();
 void ui_set_state(UIState state);
+UIState ui_get_state();
 void ui_update_weight(float weight_g, uint32_t elapsed_s, int ending_countdown_s,
                       uint32_t data_points);
 void ui_set_boot_status(const char *status, int progress_pct);

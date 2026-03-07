@@ -8,10 +8,11 @@
 
 Session::Session()
     : _state(State::IDLE), _sessionStartMs(0), _sessionStartEpoch(0),
-      _lastWeightMs(0), _lastWeight(0.0f), _prevRawWeight(0.0f),
-      _cumulativeWeight(0.0f), _rowCount(0), _hasRealTime(false), _seqNum(0),
-      _lastFlushMs(0), _weightBelowThresholdMs(0),
-      _hasExceededStartThreshold(false), _endedRowCount(0),
+      _lastWeightMs(0), _lastWeight(0.0f), _lastRelativeWeight(0.0f),
+      _prevRawWeight(0.0f), _cumulativeWeight(0.0f), _sessionTareWeight(0.0f),
+      _rowCount(0), _hasRealTime(false), _seqNum(0), _lastFlushMs(0),
+      _weightBelowThresholdMs(0), _hasExceededStartThreshold(false),
+      _endedRowCount(0),
       _endedDurationMs(0), _chartHead(0), _chartCount(0) {}
 
 void Session::begin(bool hasRealTime, uint32_t seqNum) {
@@ -75,6 +76,12 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
   if (_state != State::ACTIVE)
     return;
 
+  float relativeWeight = weight_g - _sessionTareWeight;
+  if (relativeWeight < 0.0f) {
+    relativeWeight = 0.0f;
+  }
+  _lastRelativeWeight = relativeWeight;
+
   // Track if weight has crossed the start threshold during this session
   if (!_hasExceededStartThreshold && weight_g >= SESSION_START_THRESHOLD_G) {
     _hasExceededStartThreshold = true;
@@ -90,13 +97,13 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
   }
 
   // Track cumulative positive weight deltas (ignores drops / zero / negative)
-  if (weight_g > 0.0f) {
-    float delta = weight_g - _prevRawWeight;
+  if (relativeWeight > 0.0f) {
+    float delta = relativeWeight - _prevRawWeight;
     if (delta > 0.05f) {
       _cumulativeWeight += delta;
     }
   }
-  _prevRawWeight = weight_g;
+  _prevRawWeight = relativeWeight;
 
   uint32_t t_ms = millis() - _sessionStartMs;
 
@@ -108,7 +115,7 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
     _chartHead = (_chartHead + 1) % CHART_BUF_SIZE;
   }
   _chart[slot].t_ms = t_ms;
-  _chart[slot].weight_g = weight_g;
+  _chart[slot].weight_g = relativeWeight;
 
   // Build CSV row
   char ts[32] = "";
@@ -122,7 +129,7 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
   }
   char row[96];
   snprintf(row, sizeof(row), "%lu,%s,%.1f,%.1f,\n", (unsigned long)t_ms, ts,
-           weight_g, _cumulativeWeight);
+           relativeWeight, _cumulativeWeight);
   _writeBuf += row;
   _rowCount++;
 
@@ -162,6 +169,8 @@ void Session::_startSession() {
   _hasExceededStartThreshold = false;
   _cumulativeWeight = 0.0f;
   _prevRawWeight = 0.0f;
+  _lastRelativeWeight = 0.0f;
+  _sessionTareWeight = _lastWeight;
   _chartHead = 0;
   _chartCount = 0;
   _state = State::ACTIVE;
@@ -329,19 +338,33 @@ int Session::uploadToGoogleSheet(const String &path) {
   File f = FFat.open(path, FILE_READ);
   if (!f) {
     Serial.println("[Cloud] Failed to open CSV file");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
     return -1;
   }
   size_t fileSize = f.size();
   Serial.printf("[Cloud] File: %s (%u bytes)\n", path.c_str(),
                 (unsigned int)fileSize);
 
-  static WiFiClientSecure client;
-  client.setInsecure(); // No certificate validation for Google
-  static HTTPClient http;
+  // Use per-call heap clients to avoid stale TLS/HTTP state across reconnects.
+  WiFiClientSecure *client = new WiFiClientSecure();
+  HTTPClient *http = new HTTPClient();
+  if (!client || !http) {
+    Serial.println("[Cloud] ERROR: Out of memory for HTTP client");
+    if (client)
+      delete client;
+    if (http)
+      delete http;
+    f.close();
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return -1;
+  }
+  client->setInsecure(); // No certificate validation for Google
 
   // Set a robust timeout (30s) to prevent hanging the UI indefinitely
-  http.setTimeout(30000);
-  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  http->setTimeout(30000);
+  http->setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
 
   // Build URL with parameters: filename and device_name
   String url = String(CLOUD_UPLOAD_URL);
@@ -354,11 +377,20 @@ int Session::uploadToGoogleSheet(const String &path) {
   url += "&device_name=";
   url += String(DEVICE_NAME);
 
-  http.begin(client, url);
-  http.addHeader("Content-Type", "text/plain");
+  if (!http->begin(*client, url)) {
+    Serial.println("[Cloud] ERROR: HTTP begin failed");
+    f.close();
+    http->end();
+    delete http;
+    delete client;
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    return -1;
+  }
+  http->addHeader("Content-Type", "text/plain");
 
   Serial.println("[Cloud] Streaming POST request...");
-  int httpCode = http.sendRequest("POST", &f, fileSize);
+  int httpCode = http->sendRequest("POST", &f, fileSize);
   f.close();
 
   bool success = (httpCode == 200 || httpCode == 302);
@@ -369,11 +401,13 @@ int Session::uploadToGoogleSheet(const String &path) {
     Serial.printf("[Cloud] Upload FAILED, code: %d\n", httpCode);
     if (httpCode < 0) {
       Serial.printf("[Cloud] Error: %s\n",
-                    http.errorToString(httpCode).c_str());
+                    http->errorToString(httpCode).c_str());
     }
   }
 
-  http.end();
+  http->end();
+  delete http;
+  delete client;
   WiFi.disconnect(true);
   WiFi.mode(WIFI_OFF);
 

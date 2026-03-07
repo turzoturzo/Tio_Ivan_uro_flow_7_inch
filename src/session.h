@@ -31,6 +31,12 @@ public:
     _state = State::IDLE;
     _sessionStartMs = 0;
     _lastWeightMs = millis();
+    _lastRelativeWeight = 0.0f;
+    _sessionTareWeight = 0.0f;
+    _prevRawWeight = 0.0f;
+    _cumulativeWeight = 0.0f;
+    _chartHead = 0;
+    _chartCount = 0;
     _lastSavedName = "";
   }
 
@@ -54,7 +60,8 @@ public:
   uint32_t rowCount() const { return _rowCount; }
   uint32_t elapsedMs() const;
   uint32_t startTime() const { return _sessionStartMs; }
-  float lastWeight() const { return _lastWeight; }
+  // Relative session weight (tared at session start for UX/charting)
+  float lastWeight() const { return _lastRelativeWeight; }
   int weightRemovalCountdownSecs() const;
   uint32_t seqNum() const { return _seqNum; }
   String lastSavedName() const { return _lastSavedName; }
@@ -84,8 +91,10 @@ private:
   time_t _sessionStartEpoch;
   uint32_t _lastWeightMs;
   float _lastWeight;
+  float _lastRelativeWeight;
   float _prevRawWeight;
   float _cumulativeWeight;
+  float _sessionTareWeight;
   uint32_t _rowCount;
   bool _hasRealTime;
   uint32_t _seqNum;
