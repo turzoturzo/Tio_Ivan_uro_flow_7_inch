@@ -282,6 +282,8 @@ static void processPendingUploads(bool updateUi) {
   if (updateUi) {
     ui_set_boot_status("Syncing pending data...", 0);
   }
+  // Avoid BLE scan/connect radio contention during WiFi HTTPS uploads.
+  gBle.pauseForWifi();
 
   int keepCount = 0;
   for (int i = 0; i < count; ++i) {
@@ -979,6 +981,7 @@ static AppState deriveState() {
 static volatile bool sDeferWifiSetup = false;
 static volatile bool sDeferBleExport = false;
 static volatile bool sForceBootScreen = false;
+static uint32_t sManualConnectPromptUntilMs = 0;
 
 static void onUiHome() {
   if (ui_get_state() == UIState::BOOT) {
@@ -1004,7 +1007,9 @@ static void onUiStart() {
     Serial.println("[UI] Start clicked - Forcing session");
     gSession.forceStart();
   } else if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
-    ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE", 10);
+    sForceBootScreen = true;
+    sManualConnectPromptUntilMs = millis() + 3000;
+    ui_set_boot_status("CONNECT SCALE TO START\nPLEASE TURN ON SCALE", 0);
   }
 }
 
@@ -1132,10 +1137,6 @@ static void restart_btn_cb(lv_event_t *e) {
 
 void loop() {
   static bool endHandled = false;
-  static uint32_t successCountdownStartMs = 0;
-  static bool successSyncDeferred = false;
-  static bool pendingCloudSync = false;
-  static uint32_t pendingCloudSyncAtMs = 0;
   static uint32_t lastHeartbeat = 0;
   if (millis() - lastHeartbeat >= 1000) {
     lastHeartbeat = millis();
@@ -1187,6 +1188,11 @@ void loop() {
   static bool bootConnectWindowStarted = false;
   static uint32_t bootConnectStartMs = 0;
   if (ui_get_state() == UIState::BOOT) {
+    if (sManualConnectPromptUntilMs > millis()) {
+      ui_set_boot_status("CONNECT SCALE TO START\nPLEASE TURN ON SCALE", 0);
+      bootConnectWindowStarted = false;
+      return;
+    }
     if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
       if (!bootConnectWindowStarted) {
         bootConnectWindowStarted = true;
@@ -1211,49 +1217,17 @@ void loop() {
   }
 
   // Handle upload pipeline exactly once per ended session:
-  // 1) queue locally, 2) attempt sync immediately, 3) keep failed items queued.
+  // queue locally and defer sync to next boot so UI remains responsive.
   if (gSession.state() == Session::State::ENDED && !endHandled) {
     String saved = gSession.lastSavedName();
     if (saved.length() > 0) {
       enqueuePendingUpload(saved);
-      // Defer network upload until SUCCESS countdown is complete so UI
-      // transition/render is stable and countdown remains smooth.
-      pendingCloudSync = true;
-      pendingCloudSyncAtMs = millis() + 8000;
-      ui_set_sync_status("Syncing with cloud...", false);
+      ui_set_sync_status("Cloud sync queued\nWill retry on next startup", false);
     }
-    successCountdownStartMs = millis();
     gSession.acknowledgeEnded();
     endHandled = true;
   } else if (gSession.state() == Session::State::IDLE) {
     endHandled = false;
-    successCountdownStartMs = 0;
-    pendingCloudSync = false;
-    pendingCloudSyncAtMs = 0;
-  }
-
-  if (pendingCloudSync && millis() >= pendingCloudSyncAtMs) {
-    pendingCloudSync = false;
-    processPendingUploads(false);
-    static String q[64];
-    int remaining = readSyncQueue(q, 64);
-    if (remaining == 0) {
-      ui_set_sync_status("Cloud sync complete", false);
-      successSyncDeferred = false;
-    } else {
-      ui_set_sync_status("Cloud sync deferred", true);
-      successSyncDeferred = true;
-    }
-  }
-
-  if ((gSession.state() == Session::State::WAITING ||
-       gSession.state() == Session::State::ENDED) &&
-      successCountdownStartMs > 0) {
-    uint32_t elapsed = (millis() - successCountdownStartMs) / 1000UL;
-    int secs = (elapsed >= 8U) ? 0 : (int)(8U - elapsed);
-    char secBuf[4];
-    snprintf(secBuf, sizeof(secBuf), "%d", secs);
-    ui_set_sync_status(secBuf, successSyncDeferred);
   }
 
   // Persist MAC once connected

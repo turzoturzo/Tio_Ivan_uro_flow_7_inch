@@ -1,5 +1,47 @@
 # Session Handoff Notes
 
+## Current State (v1.4-dev — March 8, 2026)
+
+**Branch:** `main` (local changes pending commit/push)
+**Base commit before this handoff:** `1cb2df0`
+**Status:** Firmware builds/flashes; core flows improved, but BLE boot-connect reliability and LVGL transition artifacts are still unresolved.
+
+### What Was Done Today
+
+- Added explicit **connect-scale prompt** when user taps **Begin New Measurement** while scale is not connected.
+  - Forces BOOT screen and shows: `CONNECT SCALE TO START / PLEASE TURN ON SCALE`.
+- Updated boot messaging/state behavior to better reflect real connection attempts:
+  - `PREPARING TO CONNECT / PLEASE TURN ON SCALE`
+  - `UNABLE TO CONNECT SCALE / RESTART SCALE` on timeout.
+- Changed measurement chart/display behavior to **zero-relative baseline** and set chart max target to **300g**.
+- Removed misleading in-session cloud sync countdown behavior:
+  - Success flow now queues upload and reports:
+    - `Cloud sync queued / Will retry on next startup`
+  - No fake numeric sync timer in SUCCESS card.
+- Kept/extended pending upload replay on boot (`/sync_queue.txt`) so failed uploads retry on subsequent startup.
+- Added BLE/Wi-Fi coexistence mitigation by pausing BLE scanning during upload attempts (`pauseForWifi()` in pending-upload path).
+- Added Wi-Fi disconnect guard to avoid STA disconnect noise when Wi-Fi mode is not active.
+
+### Current Known Issues (Open)
+
+1. **Intermittent BLE connection at boot**
+   - Device can miss/lose scale connection and remain in reconnect loops.
+   - Needs tighter BLE scan/connect state handling and clearer timeout/retry UX coupling.
+2. **LVGL graphics corruption during screen transitions**
+   - Still reproducible around ACTIVE → SUCCESS and occasionally Home → BOOT redraw.
+   - Symptoms include duplicated layers/ghosting and vertical/horizontal line artifacts.
+3. **Cloud upload instability under some network conditions**
+   - Serial logs show periodic HTTP read timeout (`code -11`), leaving files pending in retry queue.
+4. **Home button behavior during cloud/pending-sync window**
+   - Reported unresponsive in some runs; needs explicit input handling validation while sync status is visible.
+
+### Recommended Next Debug Pass
+
+- Instrument BLE state transitions with timestamped reason codes (scan start/stop, candidate found, connect begin, connect fail/disconnect cause).
+- Serialize major UI state transitions (single transition gate + cleanup) before creating next screen.
+- Add a lightweight watchdog around pending upload attempts and force return to BOOT/READY regardless of timeout outcome.
+- Validate touch routing during sync/overlay states to ensure Home callback remains active.
+
 ## Current State (v1.3 — March 7, 2026)
 
 **Branch:** `main` at commit `efa34a4`

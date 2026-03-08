@@ -317,7 +317,9 @@ int Session::uploadToGoogleSheet(const String &path) {
   }
 
   Serial.println("[Cloud] Connecting to WiFi...");
-  WiFi.disconnect(); // Ensure fresh start
+  if (WiFi.getMode() != WIFI_MODE_NULL) {
+    WiFi.disconnect();
+  }
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
   WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());

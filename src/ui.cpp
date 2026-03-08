@@ -496,17 +496,19 @@ void ui_set_state(UIState state) {
     lv_obj_align(status_label, LV_ALIGN_CENTER, 0, 72);
 
     success_count_label = lv_label_create(main_screen);
-    lv_label_set_text(success_count_label, "8");
+    lv_label_set_text(success_count_label, "");
     lv_obj_set_style_text_color(success_count_label, lv_color_hex(UI_COLOR_BLACK),
                                 0);
     lv_obj_set_style_text_font(success_count_label, &lv_font_montserrat_48, 0);
     lv_obj_align(success_count_label, LV_ALIGN_CENTER, -8, 132);
+    lv_obj_add_flag(success_count_label, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *seconds = lv_label_create(main_screen);
-    lv_label_set_text(seconds, "SECONDS");
+    lv_label_set_text(seconds, "");
     lv_obj_set_style_text_color(seconds, lv_color_hex(0x1D4E2D), 0);
     lv_obj_set_style_text_font(seconds, &lv_font_montserrat_14, 0);
     lv_obj_align(seconds, LV_ALIGN_CENTER, 70, 143);
+    lv_obj_add_flag(seconds, LV_OBJ_FLAG_HIDDEN);
 
     success_bar = lv_bar_create(main_screen);
     lv_obj_set_size(success_bar, 260, 6);
@@ -667,37 +669,7 @@ void ui_set_sync_status(const char *message, bool is_error) {
     return;
   }
 
-  bool all_digits = false;
-  int seconds = -1;
-  if (success_count_label && message && current_ui_state == UIState::SUCCESS) {
-    size_t n = strlen(message);
-    all_digits = (n > 0);
-    for (size_t i = 0; i < n; ++i) {
-      if (message[i] < '0' || message[i] > '9') {
-        all_digits = false;
-        break;
-      }
-    }
-    seconds = all_digits ? atoi(message) : -1;
-    if (seconds >= 0 && seconds <= 99) {
-      lv_label_set_text_fmt(success_count_label, "%d", seconds);
-      if (success_bar) {
-        // Countdown bar should drain as seconds decrease.
-        int progress = (seconds * 100) / 8;
-        if (progress < 0)
-          progress = 0;
-        if (progress > 100)
-          progress = 100;
-        lv_bar_set_value(success_bar, progress, LV_ANIM_OFF);
-      }
-    }
-  }
-
   if (status_label && message) {
-    // Numeric messages are reserved for countdown updates only.
-    if (current_ui_state == UIState::SUCCESS && all_digits && seconds >= 0) {
-      return;
-    }
     lv_color_t tone = lv_color_hex(UI_COLOR_GREEN);
     if (is_error) {
       tone = lv_color_hex(UI_COLOR_DANGER);
@@ -706,6 +678,16 @@ void ui_set_sync_status(const char *message, bool is_error) {
     }
     lv_label_set_text(status_label, message);
     lv_obj_set_style_text_color(status_label, tone, 0);
+  }
+
+  if (success_bar && current_ui_state == UIState::SUCCESS) {
+    int progress = 60; // active sync by default
+    if (is_error) {
+      progress = 30;
+    } else if (message && strstr(message, "complete")) {
+      progress = 100;
+    }
+    lv_bar_set_value(success_bar, progress, LV_ANIM_OFF);
   }
 }
 
