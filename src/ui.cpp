@@ -61,6 +61,11 @@ static void clear_refs() {
   success_bar = nullptr;
 }
 
+// Animation callback for indeterminate boot progress bar
+static void boot_bar_anim_cb(void *bar, int32_t v) {
+  lv_bar_set_value((lv_obj_t *)bar, v, LV_ANIM_OFF);
+}
+
 static void style_surface(lv_obj_t *obj, lv_color_t bg, lv_color_t border) {
   lv_obj_set_style_bg_color(obj, bg, 0);
   lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
@@ -215,22 +220,29 @@ void ui_set_state(UIState state) {
     lv_obj_align(countdown, LV_ALIGN_TOP_RIGHT, -20, 116);
 
     boot_title_label = lv_label_create(countdown);
-    lv_label_set_text(boot_title_label, "CONNECTING TO SCALE");
+    lv_label_set_text(boot_title_label, "SCALE CONNECTION");
     apply_mono_style(boot_title_label, lv_color_hex(UI_COLOR_MUTED));
     lv_obj_align(boot_title_label, LV_ALIGN_TOP_MID, 0, 26);
 
+    // Main status text (replaces countdown number)
     boot_count_label = lv_label_create(countdown);
-    lv_label_set_text(boot_count_label, "10");
-    lv_obj_set_style_text_color(boot_count_label, lv_color_hex(UI_COLOR_GREEN),
+    lv_label_set_text(boot_count_label, "Scanning for scale...");
+    lv_obj_set_style_text_color(boot_count_label, lv_color_hex(UI_COLOR_WHITE),
                                 0);
-    lv_obj_set_style_text_font(boot_count_label, &lv_font_montserrat_48, 0);
-    lv_obj_align(boot_count_label, LV_ALIGN_CENTER, 0, -6);
+    lv_obj_set_style_text_font(boot_count_label, &lv_font_montserrat_24, 0);
+    lv_obj_set_style_text_align(boot_count_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(boot_count_label, 340);
+    lv_obj_align(boot_count_label, LV_ALIGN_CENTER, 0, -16);
 
+    // Hint text (shown during scanning)
     boot_seconds_label = lv_label_create(countdown);
-    lv_label_set_text(boot_seconds_label, "SECONDS");
+    lv_label_set_text(boot_seconds_label, "Turn on your Acaia Pearl S");
     apply_mono_style(boot_seconds_label, lv_color_hex(UI_COLOR_MUTED));
-    lv_obj_align(boot_seconds_label, LV_ALIGN_CENTER, 0, 56);
+    lv_obj_set_style_text_align(boot_seconds_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(boot_seconds_label, 340);
+    lv_obj_align(boot_seconds_label, LV_ALIGN_CENTER, 0, 40);
 
+    // Indeterminate scanning progress bar
     boot_bar = lv_bar_create(countdown);
     lv_obj_set_size(boot_bar, 300, 6);
     lv_bar_set_range(boot_bar, 0, 100);
@@ -242,6 +254,17 @@ void ui_set_state(UIState state) {
                               LV_PART_INDICATOR);
     lv_obj_set_style_bg_opa(boot_bar, LV_OPA_COVER, LV_PART_INDICATOR);
     lv_obj_align(boot_bar, LV_ALIGN_BOTTOM_MID, 0, -30);
+
+    // Start indeterminate sweep animation
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, boot_bar);
+    lv_anim_set_values(&a, 0, 100);
+    lv_anim_set_time(&a, 1500);
+    lv_anim_set_playback_time(&a, 1500);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_exec_cb(&a, boot_bar_anim_cb);
+    lv_anim_start(&a);
 
     lv_obj_t *f1 = lv_label_create(main_screen);
     lv_label_set_text(f1, "ESP32-S3 • LVGL 8.3 • 800x480");
@@ -373,7 +396,7 @@ void ui_set_state(UIState state) {
     lv_obj_align(time_label, LV_ALIGN_TOP_RIGHT, -206, 28);
 
     lv_obj_t *current_title = lv_label_create(main_screen);
-    lv_label_set_text(current_title, "CURRENT");
+    lv_label_set_text(current_title, "NET");
     lv_obj_set_style_text_color(current_title, lv_color_hex(UI_COLOR_MUTED), 0);
     lv_obj_set_style_text_font(current_title, &lv_font_montserrat_14, 0);
     lv_obj_align(current_title, LV_ALIGN_TOP_RIGHT, -76, 12);
@@ -616,38 +639,32 @@ void ui_set_boot_status(const char *status, int progress_pct) {
   if (current_ui_state != UIState::BOOT)
     return;
 
-  if (boot_title_label && status) {
-    lv_label_set_text(boot_title_label, status);
+  // Update the main status text
+  if (boot_count_label && status) {
+    lv_label_set_text(boot_count_label, status);
   }
+
   if (progress_pct > 0) {
-    // Active countdown: show number, SECONDS label, and bar
+    // Connected state: green text, hide hint, stop animation, fill bar
     if (boot_count_label) {
-      lv_obj_clear_flag(boot_count_label, LV_OBJ_FLAG_HIDDEN);
-      int displayVal = progress_pct;
-      if (displayVal > 99)
-        displayVal = 99;
-      lv_label_set_text_fmt(boot_count_label, "%d", displayVal);
-    }
-    if (boot_seconds_label) {
-      lv_obj_clear_flag(boot_seconds_label, LV_OBJ_FLAG_HIDDEN);
-    }
-    if (boot_bar) {
-      lv_obj_clear_flag(boot_bar, LV_OBJ_FLAG_HIDDEN);
-      int barVal = progress_pct * 10;
-      if (barVal > 100)
-        barVal = 100;
-      lv_bar_set_value(boot_bar, barVal, LV_ANIM_OFF);
-    }
-  } else {
-    // Countdown finished: hide number, SECONDS, and bar — title alone is enough
-    if (boot_count_label) {
-      lv_obj_add_flag(boot_count_label, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_set_style_text_color(boot_count_label,
+                                  lv_color_hex(UI_COLOR_GREEN), 0);
     }
     if (boot_seconds_label) {
       lv_obj_add_flag(boot_seconds_label, LV_OBJ_FLAG_HIDDEN);
     }
     if (boot_bar) {
-      lv_obj_add_flag(boot_bar, LV_OBJ_FLAG_HIDDEN);
+      lv_anim_del(boot_bar, boot_bar_anim_cb);
+      lv_bar_set_value(boot_bar, 100, LV_ANIM_ON);
+    }
+  } else {
+    // Scanning state: white text, show hint, animation continues
+    if (boot_count_label) {
+      lv_obj_set_style_text_color(boot_count_label,
+                                  lv_color_hex(UI_COLOR_WHITE), 0);
+    }
+    if (boot_seconds_label) {
+      lv_obj_clear_flag(boot_seconds_label, LV_OBJ_FLAG_HIDDEN);
     }
   }
 }

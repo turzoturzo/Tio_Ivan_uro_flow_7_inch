@@ -98,6 +98,31 @@
     padding: 0.15rem 0.5rem;
     border-radius: 10px;
   }
+  .search-bar {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .search-icon {
+    font-size: 0.8rem;
+    opacity: 0.5;
+  }
+  .search-bar input {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.45rem 0.65rem;
+    color: var(--white);
+    font-size: 0.8rem;
+    font-family: var(--font);
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-bar input::placeholder { color: var(--muted); opacity: 0.6; }
+  .search-bar input:focus { border-color: var(--green); }
   .session-list {
     flex: 1;
     overflow-y: auto;
@@ -139,6 +164,16 @@
     color: var(--muted);
   }
   .session-item .meta .val { color: var(--white); font-weight: 500; }
+  .device-tag {
+    font-size: 0.6rem;
+    color: var(--green);
+    background: rgba(0, 230, 96, 0.1);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-weight: 500;
+    margin-left: 0.4rem;
+    vertical-align: middle;
+  }
 
   /* ── Main Content ────────────────────────────────────────────── */
   .main {
@@ -298,6 +333,10 @@
       <h2>Sessions</h2>
       <span class="session-count" id="sessionCount">—</span>
     </div>
+    <div class="search-bar">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="searchInput" placeholder="Search by date, device, volume..." oninput="filterSessions()">
+    </div>
     <div class="session-list" id="sessionList">
       <div class="empty-state">
         <div class="spinner"></div>
@@ -316,6 +355,10 @@
     <!-- Session Detail (hidden until selection) -->
     <div id="sessionDetail" style="display:none;">
 
+      <div id="sessionHeader" style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
+        <span id="sessionTitle" style="font-size:1.1rem;font-weight:600;"></span>
+        <span id="sessionDevice" class="device-tag" style="font-size:0.7rem;"></span>
+      </div>
       <div class="tabs">
         <button class="tab-btn active" data-tab="detail">Session Detail</button>
         <button class="tab-btn" data-tab="trends">Trends</button>
@@ -385,6 +428,20 @@ let volumeChartInst = null;
 let trendQmaxInst = null;
 let trendVolumeInst = null;
 
+// ── Device Name Resolution ────────────────────────────────────────
+// Derive device name from CSV filename prefix.
+// Filename format: {prefix}_{YYYYMMDD}_{HHMMSS}.csv
+const DEVICE_MAP = {
+  'pearls': 'Mongo-Pearl-1',
+  'test':   'Mongo-Pearl-1',
+};
+function deviceNameFromFilename(filename) {
+  const m = filename.match(/^([a-zA-Z]+)_/);
+  if (m && DEVICE_MAP[m[1]]) return DEVICE_MAP[m[1]];
+  if (m) return m[1]; // unknown prefix — use as-is
+  return null;
+}
+
 // ── Data Loading ──────────────────────────────────────────────────
 async function loadSheetData() {
   const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
@@ -405,8 +462,10 @@ async function loadSheetData() {
 
     const filename = cells[0]?.v || '';
     const colB = String(cells[1]?.v ?? '');
+
     // Skip metadata rows (comments like "# fw_version=1.0.0")
-    if (colB.startsWith('#')) continue;
+    // Note: column B is number-typed so metadata text appears as NaN
+    if (colB.startsWith('#') || colB === 'null' || colB === 'undefined') continue;
 
     const t_ms = parseFloat(colB);
     if (isNaN(t_ms)) continue;
@@ -417,11 +476,17 @@ async function loadSheetData() {
     const event     = cells[5]?.v || '';
 
     if (!grouped[filename]) {
-      grouped[filename] = { filename, startTime: null, rows: [] };
+      grouped[filename] = { filename, startTime: null, deviceName: deviceNameFromFilename(filename), rows: [] };
     }
 
     if (event === 'START') {
       grouped[filename].startTime = ts_utc;
+    }
+
+    // Check for device name in END summary event (e.g., "END|device=Mongo-Pearl-1|...")
+    if (event && event.startsWith('END') && event.includes('device=')) {
+      const dm = event.match(/device=([^|]+)/);
+      if (dm) grouped[filename].deviceName = dm[1].trim();
     }
 
     grouped[filename].rows.push({ t_ms, weight_g, cumulative_g: cumul_g, event });
@@ -512,10 +577,11 @@ function renderSessionList() {
 
     const vol = s.stats.volume.toFixed(0);
     const qmax = s.stats.qmax.toFixed(1);
+    const devTag = s.deviceName ? `<span class="device-tag">${s.deviceName}</span>` : '';
 
     html += `
       <div class="session-item" data-idx="${idx}" onclick="selectSession(${idx})">
-        <div class="time">${timeStr}</div>
+        <div class="time">${timeStr} ${devTag}</div>
         <div class="meta">
           <span>Vol: <span class="val">${vol} mL</span></span>
           <span>Qmax: <span class="val">${qmax}</span></span>
@@ -524,8 +590,10 @@ function renderSessionList() {
   });
 
   list.innerHTML = html;
+  const devices = [...new Set(allSessions.map(s => s.deviceName).filter(Boolean))];
+  const devStr = devices.length > 0 ? devices.join(', ') : 'Unknown';
   document.getElementById('headerMeta').textContent =
-    `${allSessions.length} sessions · Device: Mongo-Pearl-1`;
+    `${allSessions.length} sessions · ${devices.length > 1 ? 'Devices' : 'Device'}: ${devStr}`;
 }
 
 function parseSessionDate(s) {
@@ -537,6 +605,50 @@ function parseSessionDate(s) {
   const m = s.filename.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
   if (m) return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`);
   return null;
+}
+
+// ── Search / Filter ───────────────────────────────────────────────
+function filterSessions() {
+  const query = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+  const list = document.getElementById('sessionList');
+
+  if (!query) {
+    // Show all — re-render full list
+    document.querySelectorAll('.session-item, .date-group-label').forEach(el => el.style.display = '');
+    document.getElementById('sessionCount').textContent = allSessions.length;
+    return;
+  }
+
+  let visibleCount = 0;
+  const visibleDates = new Set();
+
+  allSessions.forEach((s, idx) => {
+    const el = list.querySelector(`.session-item[data-idx="${idx}"]`);
+    if (!el) return;
+
+    const dt = parseSessionDate(s);
+    const dateStr = dt ? dt.toLocaleDateString('en-US', { weekday: 'short', month: 'long', day: 'numeric', year: 'numeric' }).toLowerCase() : '';
+    const timeStr = dt ? dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }).toLowerCase() : '';
+    const device = (s.deviceName || '').toLowerCase();
+    const vol = s.stats.volume.toFixed(0);
+    const qmax = s.stats.qmax.toFixed(1);
+    const searchText = `${dateStr} ${timeStr} ${device} ${vol} ${qmax} ${s.filename}`.toLowerCase();
+
+    const match = query.split(/\s+/).every(term => searchText.includes(term));
+    el.style.display = match ? '' : 'none';
+    if (match) {
+      visibleCount++;
+      const groupDate = dt ? dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Unknown';
+      visibleDates.add(groupDate);
+    }
+  });
+
+  // Show/hide date group labels based on whether any session in that group is visible
+  list.querySelectorAll('.date-group-label').forEach(el => {
+    el.style.display = visibleDates.has(el.textContent) ? '' : 'none';
+  });
+
+  document.getElementById('sessionCount').textContent = visibleCount;
 }
 
 // ── Select & Render Session ───────────────────────────────────────
@@ -551,6 +663,21 @@ function selectSession(idx) {
 
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('sessionDetail').style.display = '';
+
+  // Update session header with date/time and device name
+  const dt = parseSessionDate(s);
+  const titleStr = dt
+    ? dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+      + ' at ' + dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+    : s.filename;
+  document.getElementById('sessionTitle').textContent = titleStr;
+  const devEl = document.getElementById('sessionDevice');
+  if (s.deviceName) {
+    devEl.textContent = s.deviceName;
+    devEl.style.display = '';
+  } else {
+    devEl.style.display = 'none';
+  }
 
   renderStatCards(s.stats);
   renderFlowChart(s.stats);

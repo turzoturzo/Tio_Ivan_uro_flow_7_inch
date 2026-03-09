@@ -1127,7 +1127,7 @@ void setup() {
   processPendingUploads(true);
 
   // ── BLE Acaia client init ────────────────────────────────────────────────
-  ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE", 10);
+  ui_set_boot_status("Scanning for scale...", 0);
   gBle.begin(onWeight, storedMac.length() >= 17 ? storedMac.c_str() : nullptr);
 
   gState = AppState::BLE_SCANNING;
@@ -1193,37 +1193,23 @@ void loop() {
     ui_set_state(UIState::BOOT);
   }
 
-  // Boot status tile behavior (including when BOOT is forced via Home):
-  // countdown should animate only while disconnected+idle on BOOT screen.
-  static bool bootConnectWindowStarted = false;
-  static uint32_t bootConnectStartMs = 0;
+  // Boot status: show scanning progress with indeterminate animation.
+  // No countdown or timeout — BLE scans indefinitely until the scale connects.
   if (ui_get_state() == UIState::BOOT) {
     if (sManualConnectPromptUntilMs > millis()) {
-      ui_set_boot_status("CONNECT SCALE TO START\nPLEASE TURN ON SCALE", 0);
-      bootConnectWindowStarted = false;
+      ui_set_boot_status("Turn on scale to begin", 0);
       return;
     }
     if (!gBle.isConnected() && gSession.state() == Session::State::IDLE) {
-      if (!bootConnectWindowStarted) {
-        bootConnectWindowStarted = true;
-        bootConnectStartMs = millis();
-      }
-      uint32_t elapsedS = (millis() - bootConnectStartMs) / 1000UL;
-      int remaining = (elapsedS < 10U) ? (int)(10U - elapsedS) : 0;
-      if (remaining > 0) {
-        ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE",
-                           remaining);
+      // Show descriptive scanning/connecting status
+      if (gBle.isScanning()) {
+        ui_set_boot_status("Scanning for scale...", 0);
       } else {
-        ui_set_boot_status("UNABLE TO CONNECT SCALE\nRESTART SCALE", 0);
+        ui_set_boot_status("Connecting to scale...", 0);
       }
-    } else {
-      bootConnectWindowStarted = false;
-      ui_set_boot_status(gBle.isConnected() ? "SCALE CONNECTED"
-                                            : "PREPARING TO CONNECT",
-                         0);
+    } else if (gBle.isConnected()) {
+      ui_set_boot_status("Scale Connected!", 100);
     }
-  } else {
-    bootConnectWindowStarted = false;
   }
 
   // Handle upload pipeline exactly once per ended session:
