@@ -306,14 +306,13 @@ static void processPendingUploads(bool updateUi) {
     } else {
       keep[keepCount++] = path;
       Serial.printf("[Cloud] Keep pending (rc=%d): %s\n", rc, path.c_str());
-      if (rc == 0) {
-        // WiFi failed: stop early and retry remaining files next boot.
-        for (int j = i + 1; j < count && keepCount < 64; ++j) {
-          keep[keepCount++] = items[j];
-        }
-        break;
-      }
     }
+    // Only attempt ONE upload per boot — keep BLE connection fast.
+    // Preserve remaining files for next boot.
+    for (int j = i + 1; j < count && keepCount < 64; ++j) {
+      keep[keepCount++] = items[j];
+    }
+    break;
   }
   writeSyncQueue(keep, keepCount);
 
@@ -1124,14 +1123,8 @@ void setup() {
   // ── Session init ─────────────────────────────────────────────────────────
   gSession.begin(gTimeSynced, seqNum);
 
-  // ── Pending cloud syncs deferred — BLE connection takes priority at boot.
-  // Uploads will be retried on next boot after a successful session.
-  {
-    static String items[64];
-    int pending = readSyncQueue(items, 64);
-    if (pending > 0)
-      Serial.printf("[Cloud] %d pending uploads — deferred until after BLE connect\n", pending);
-  }
+  // ── Retry ONE pending cloud upload (limit to 1 to keep boot fast for BLE).
+  processPendingUploads(true);
 
   // ── BLE Acaia client init ────────────────────────────────────────────────
   ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE", 10);
@@ -1239,7 +1232,12 @@ void loop() {
     String saved = gSession.lastSavedName();
     if (saved.length() > 0) {
       enqueuePendingUpload(saved);
-      ui_set_sync_status("Cloud sync queued\nWill retry on next startup", false);
+      String wifiSsid, wifiPass;
+      if (loadWifiCreds(wifiSsid, wifiPass)) {
+        ui_set_sync_status("Data saved\nCloud sync on next boot", false);
+      } else {
+        ui_set_sync_status("Data saved locally\nConfigure WiFi to enable sync", false);
+      }
     }
     gSession.acknowledgeEnded();
     endHandled = true;

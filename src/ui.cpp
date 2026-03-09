@@ -181,8 +181,8 @@ void ui_init() {
 void ui_set_state(UIState state) {
   if (current_ui_state == state)
     return;
-  current_ui_state = state;
 
+  current_ui_state = state;
   lv_obj_clean(main_screen);
   clear_refs();
 
@@ -424,11 +424,12 @@ void ui_set_state(UIState state) {
     lv_obj_center(end_lbl);
 
     end_overlay = lv_obj_create(main_screen);
-    lv_obj_set_size(end_overlay, 776, 362);
-    lv_obj_align_to(end_overlay, chart, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_size(end_overlay, 800, 480);
+    lv_obj_align(end_overlay, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(end_overlay, lv_color_hex(UI_COLOR_BLACK), 0);
-    lv_obj_set_style_bg_opa(end_overlay, LV_OPA_80, 0);
+    lv_obj_set_style_bg_opa(end_overlay, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(end_overlay, 0, 0);
+    lv_obj_set_style_pad_all(end_overlay, 0, 0);
     lv_obj_add_flag(end_overlay, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t *end_a = lv_label_create(end_overlay);

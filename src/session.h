@@ -66,12 +66,17 @@ public:
   uint32_t seqNum() const { return _seqNum; }
   String lastSavedName() const { return _lastSavedName; }
   float cumulativeWeight() const { return _cumulativeWeight; }
+  float lastFlowRate() const { return _lastFlowRate; }
   uint32_t elapsedSeconds() const { return elapsedMs() / 1000; }
   int uploadToGoogleSheet(const String &path);
 
   // Accessors for post-session summary (valid when state() == ENDED)
   uint32_t endedRowCount() const { return _endedRowCount; }
   uint32_t endedDurationMs() const { return _endedDurationMs; }
+  float endedQmax() const { return _qMax; }
+  float endedQave() const { return _endedDurationMs > 0 ? (_cumulativeWeight / (_endedDurationMs / 1000.0f)) : 0.0f; }
+  float endedVoidedVolume() const { return _cumulativeWeight; }  // g ≈ mL
+  float endedTQmaxS() const { return _tQmaxMs / 1000.0f; }
 
   // Chart data accessors (ring buffer — use chartHead() as start index)
   const ChartSample *chartData() const { return _chart; }
@@ -112,6 +117,15 @@ private:
   // Captured at session end — valid when state() == ENDED
   uint32_t _endedRowCount;
   uint32_t _endedDurationMs;
+
+  // Flow rate computation (smoothed derivative of cumulative weight)
+  float _lastFlowRate;           // current smoothed flow rate (mL/s)
+  float _qMax;                   // peak flow rate during session
+  uint32_t _tQmaxMs;             // time (ms since session start) when Qmax occurred
+  float _flowRateHistory[4];     // ring buffer for 4-sample moving average
+  int _flowRateHistIdx;          // current index into ring buffer
+  uint32_t _prevFlowCalcMs;      // millis() of previous flow rate calculation
+  float _prevCumulativeForFlow;  // cumulative_g at previous flow calc
 
   // Thread-safe weight transfer
   std::atomic<float> _pendingWeight{0.0f};

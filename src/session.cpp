@@ -12,8 +12,12 @@ Session::Session()
       _prevRawWeight(0.0f), _cumulativeWeight(0.0f), _sessionTareWeight(0.0f),
       _rowCount(0), _hasRealTime(false), _seqNum(0), _lastFlushMs(0),
       _weightBelowThresholdMs(0), _hasExceededStartThreshold(false),
-      _endedRowCount(0),
-      _endedDurationMs(0), _chartHead(0), _chartCount(0) {}
+      _endedRowCount(0), _endedDurationMs(0),
+      _lastFlowRate(0.0f), _qMax(0.0f), _tQmaxMs(0),
+      _flowRateHistIdx(0), _prevFlowCalcMs(0), _prevCumulativeForFlow(0.0f),
+      _chartHead(0), _chartCount(0) {
+  memset(_flowRateHistory, 0, sizeof(_flowRateHistory));
+}
 
 void Session::begin(bool hasRealTime, uint32_t seqNum) {
   _hasRealTime = hasRealTime;
@@ -107,6 +111,37 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
 
   uint32_t t_ms = millis() - _sessionStartMs;
 
+  // ── Flow rate computation (smoothed derivative of cumulative weight) ──
+  // Compute instantaneous flow rate as delta_volume / delta_time, then smooth
+  // with a 4-sample moving average to filter scale noise.
+  // Since urine density ≈ 1 g/mL, cumulative_g ≈ volume in mL.
+  float instantFlowRate = 0.0f;
+  if (_prevFlowCalcMs > 0) {
+    uint32_t now = millis();
+    uint32_t dt_ms = now - _prevFlowCalcMs;
+    if (dt_ms > 0) {
+      float dVol = _cumulativeWeight - _prevCumulativeForFlow;  // mL (≈ g)
+      instantFlowRate = (dVol / (float)dt_ms) * 1000.0f;  // mL/s
+      if (instantFlowRate < 0.0f) instantFlowRate = 0.0f;
+    }
+  }
+  _prevFlowCalcMs = millis();
+  _prevCumulativeForFlow = _cumulativeWeight;
+
+  // 4-sample moving average for smoothing
+  _flowRateHistory[_flowRateHistIdx % 4] = instantFlowRate;
+  _flowRateHistIdx++;
+  int numSamples = (_flowRateHistIdx < 4) ? _flowRateHistIdx : 4;
+  float sum = 0.0f;
+  for (int i = 0; i < numSamples; i++) sum += _flowRateHistory[i];
+  _lastFlowRate = sum / (float)numSamples;
+
+  // Track Qmax and time-to-Qmax
+  if (_lastFlowRate > _qMax) {
+    _qMax = _lastFlowRate;
+    _tQmaxMs = t_ms;
+  }
+
   // Append to chart ring buffer
   int slot = (_chartHead + _chartCount) % CHART_BUF_SIZE;
   if (_chartCount < CHART_BUF_SIZE) {
@@ -117,7 +152,7 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
   _chart[slot].t_ms = t_ms;
   _chart[slot].weight_g = relativeWeight;
 
-  // Build CSV row
+  // Build CSV row (now includes flow_rate_ml_s)
   char ts[32] = "";
   if (_hasRealTime && _sessionStartEpoch > 0) {
     time_t rowEpoch = _sessionStartEpoch + (time_t)(t_ms / 1000UL);
@@ -127,9 +162,9 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
              tmUtc.tm_year + 1900, tmUtc.tm_mon + 1, tmUtc.tm_mday,
              tmUtc.tm_hour, tmUtc.tm_min, tmUtc.tm_sec);
   }
-  char row[96];
-  snprintf(row, sizeof(row), "%lu,%s,%.1f,%.1f,\n", (unsigned long)t_ms, ts,
-           relativeWeight, _cumulativeWeight);
+  char row[128];
+  snprintf(row, sizeof(row), "%lu,%s,%.1f,%.1f,%.2f,\n", (unsigned long)t_ms, ts,
+           relativeWeight, _cumulativeWeight, _lastFlowRate);
   _writeBuf += row;
   _rowCount++;
 
@@ -171,6 +206,13 @@ void Session::_startSession() {
   _prevRawWeight = 0.0f;
   _lastRelativeWeight = 0.0f;
   _sessionTareWeight = _lastWeight;
+  _lastFlowRate = 0.0f;
+  _qMax = 0.0f;
+  _tQmaxMs = 0;
+  _flowRateHistIdx = 0;
+  _prevFlowCalcMs = 0;
+  _prevCumulativeForFlow = 0.0f;
+  memset(_flowRateHistory, 0, sizeof(_flowRateHistory));
   _chartHead = 0;
   _chartCount = 0;
   _state = State::ACTIVE;
@@ -193,8 +235,8 @@ void Session::_startSession() {
              tmUtc.tm_year + 1900, tmUtc.tm_mon + 1, tmUtc.tm_mday,
              tmUtc.tm_hour, tmUtc.tm_min, tmUtc.tm_sec);
   }
-  char startRow[96];
-  snprintf(startRow, sizeof(startRow), "0,%s,0.0,0.0,START\n", startTs);
+  char startRow[128];
+  snprintf(startRow, sizeof(startRow), "0,%s,0.0,0.0,0.00,START\n", startTs);
   _writeBuf += startRow;
   _rowCount++;
 }
@@ -207,6 +249,37 @@ void Session::_endSession() {
   // Capture final stats before any file operations (for post-session display)
   _endedDurationMs = millis() - _sessionStartMs;
   _endedRowCount = _rowCount;
+
+  // Compute average flow rate (Qave = voided_volume / voiding_time)
+  float qAve = (_endedDurationMs > 0)
+                   ? (_cumulativeWeight / (_endedDurationMs / 1000.0f))
+                   : 0.0f;
+
+  // Write END summary row with clinical parameters
+  // Format: t_ms, ts_utc, voided_vol_ml, Qmax_ml_s, Qave_ml_s, END|TQmax_s=X
+  char endTs[32] = "";
+  if (_hasRealTime && _sessionStartEpoch > 0) {
+    time_t endEpoch =
+        _sessionStartEpoch + (time_t)(_endedDurationMs / 1000UL);
+    struct tm tmUtc;
+    gmtime_r(&endEpoch, &tmUtc);
+    snprintf(endTs, sizeof(endTs), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+             tmUtc.tm_year + 1900, tmUtc.tm_mon + 1, tmUtc.tm_mday,
+             tmUtc.tm_hour, tmUtc.tm_min, tmUtc.tm_sec);
+  }
+  char endRow[192];
+  snprintf(endRow, sizeof(endRow),
+           "%lu,%s,%.1f,%.1f,0.00,"
+           "END|voided_ml=%.1f|Qmax=%.2f|Qave=%.2f|TQmax_s=%.1f|"
+           "duration_s=%.1f\n",
+           (unsigned long)_endedDurationMs, endTs, 0.0f, _cumulativeWeight,
+           _cumulativeWeight, _qMax, qAve, _tQmaxMs / 1000.0f,
+           _endedDurationMs / 1000.0f);
+  _writeBuf += endRow;
+
+  Serial.printf("[Session] Summary: Voided=%.1f mL, Qmax=%.2f mL/s, "
+                "Qave=%.2f mL/s, TQmax=%.1f s\n",
+                _cumulativeWeight, _qMax, qAve, _tQmaxMs / 1000.0f);
 
   // Flush remaining buffer
   _flushBuffer();
@@ -247,7 +320,7 @@ void Session::_flushBuffer() {
 }
 
 void Session::_writeHeader() {
-  char header[160];
+  char header[192];
   char startStr[32] = "unknown";
 
   if (_hasRealTime) {
@@ -262,7 +335,7 @@ void Session::_writeHeader() {
            "# device=%s\n"
            "# fw_version=%s\n"
            "# session_start=%s\n"
-           "t_ms,ts_utc,weight_g,cumulative_g,event\n",
+           "t_ms,ts_utc,weight_g,cumulative_g,flow_rate_ml_s,event\n",
            DEVICE_NAME, FW_VERSION, startStr);
 
   _file.print(header);
@@ -364,8 +437,8 @@ int Session::uploadToGoogleSheet(const String &path) {
   }
   client->setInsecure(); // No certificate validation for Google
 
-  // Set a robust timeout (30s) to prevent hanging the UI indefinitely
-  http->setTimeout(30000);
+  // Set a robust timeout (45s) — ESP32 TLS handshake with Google can be slow
+  http->setTimeout(45000);
   http->setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
 
   // Build URL with parameters: filename and device_name

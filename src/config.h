@@ -2,7 +2,7 @@
 
 // ─── Firmware version ───────────────────────────────────────────────────────
 #define FW_VERSION "1.0.0"
-#define DEVICE_NAME "pearls_logger"
+#define DEVICE_NAME "Mongo-Pearl-1"
 
 // ─── WiFi credentials (for NTP time sync on boot) ───────────────────────────
 // WARNING: do not commit real credentials to a public repository
