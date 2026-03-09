@@ -1,46 +1,77 @@
 # Session Handoff Notes
 
-## Current State (v1.4-dev — March 8, 2026)
+## Current State (v1.5-dev — March 9, 2026)
 
-**Branch:** `main` (local changes pending commit/push)
-**Base commit before this handoff:** `1cb2df0`
-**Status:** Firmware builds/flashes; core flows improved, but BLE boot-connect reliability and LVGL transition artifacts are still unresolved.
+**Branch:** `main`
+**Latest commit:** `3c772ca` (pushed)
+**Status:** Firmware builds/flashes successfully. Device boots, connects to Acaia Pearl S, records sessions, saves CSVs to FFat. Web dashboard live on GitHub Pages. Cloud upload still failing (-11 timeout).
 
-### What Was Done Today
+### What Was Done Today (March 9)
 
-- Added explicit **connect-scale prompt** when user taps **Begin New Measurement** while scale is not connected.
-  - Forces BOOT screen and shows: `CONNECT SCALE TO START / PLEASE TURN ON SCALE`.
-- Updated boot messaging/state behavior to better reflect real connection attempts:
-  - `PREPARING TO CONNECT / PLEASE TURN ON SCALE`
-  - `UNABLE TO CONNECT SCALE / RESTART SCALE` on timeout.
-- Changed measurement chart/display behavior to **zero-relative baseline** and set chart max target to **300g**.
-- Removed misleading in-session cloud sync countdown behavior:
-  - Success flow now queues upload and reports:
-    - `Cloud sync queued / Will retry on next startup`
-  - No fake numeric sync timer in SUCCESS card.
-- Kept/extended pending upload replay on boot (`/sync_queue.txt`) so failed uploads retry on subsequent startup.
-- Added BLE/Wi-Fi coexistence mitigation by pausing BLE scanning during upload attempts (`pauseForWifi()` in pending-upload path).
-- Added Wi-Fi disconnect guard to avoid STA disconnect noise when Wi-Fi mode is not active.
+#### Firmware Changes
+- **Boot screen UX overhaul** — Replaced misleading 10-second countdown with indeterminate scanning animation (LVGL `lv_anim_t` sweeping bar). Shows descriptive status: "Scanning for scale...", "Connecting...", "Scale Connected!" with green text on success.
+- **Lowered SESSION_START_THRESHOLD_G from 50g to 5g** — The 50g threshold caused session tare to capture 50g+ as baseline, losing initial volume. At 5g the tare matches actual container weight (~5g), so NET weight accurately reflects voided volume.
+- **Weight label "CURRENT" → "NET"** on ACTIVE screen to clarify tare-adjusted display.
 
-### Current Known Issues (Open)
+#### Dashboard Changes (docs/index.html)
+- **Device name tags** — Derived from filename prefix via `DEVICE_MAP` (`pearls_` → "Mongo-Pearl-1"). Shown as green badges on session cards and in session detail header.
+- **Search bar** — Full-text search across date, time, device name, voided volume, Qmax, and filename. Supports multi-word queries with live filtering. Auto-hides empty date group headers.
+- **Session header** — Shows full date and device name in session detail view.
+- **Dynamic header meta** — Lists unique connected devices.
 
-1. **Intermittent BLE connection at boot**
-   - Device can miss/lose scale connection and remain in reconnect loops.
-   - Needs tighter BLE scan/connect state handling and clearer timeout/retry UX coupling.
-2. **LVGL graphics corruption during screen transitions**
-   - Still reproducible around ACTIVE → SUCCESS and occasionally Home → BOOT redraw.
-   - Symptoms include duplicated layers/ghosting and vertical/horizontal line artifacts.
-3. **Cloud upload instability under some network conditions**
-   - Serial logs show periodic HTTP read timeout (`code -11`), leaving files pending in retry queue.
-4. **Home button behavior during cloud/pending-sync window**
-   - Reported unresponsive in some runs; needs explicit input handling validation while sync status is visible.
+### Serial Log Observations (March 9, live capture)
 
-### Recommended Next Debug Pass
+```
+Boot sequence:
+  WiFi connects → NTP syncs → 18 pending uploads → upload attempt → -11 timeout
+  BLE scan finds PEARLS50C7DA immediately
+  BLE connect fails 3-7 times before succeeding (radio contention after WiFi)
+  Scale connected → weight notifications flowing
 
-- Instrument BLE state transitions with timestamped reason codes (scan start/stop, candidate found, connect begin, connect fail/disconnect cause).
-- Serialize major UI state transitions (single transition gate + cleanup) before creating next screen.
-- Add a lightweight watchdog around pending upload attempts and force return to BOOT/READY regardless of timeout outcome.
-- Validate touch routing during sync/overlay states to ensure Home callback remains active.
+Session captures:
+  pearls_20260309_170410.csv — 573.2mL, Qmax=347.56 mL/s, Qave=24.02, 23.9s
+  pearls_20260309_170448.csv — 307.6mL, Qmax=182.95 mL/s, Qave=15.01, 20.5s
+```
+
+### Current Known Issues (Priority Order)
+
+1. **CRITICAL: Qmax spike bug** — Flow rate computation produces unrealistic peaks (180-350 mL/s vs normal 15-40 mL/s). Root cause: instantaneous flow rate from single BLE sample deltas (~150ms apart) creates spikes when liquid hits scale suddenly. The 4-sample moving average is insufficient. **Fix needed:** Cap max physiological flow rate at ~50 mL/s, and/or use 1-second time windows instead of per-sample deltas for flow rate calculation. File: `session.cpp` lines 118-143.
+
+2. **Cloud upload -11 timeout** — Every upload attempt fails with HTTP code -11 (read timeout). TLS handshake to Google Apps Script (`script.google.com`) times out on ESP32. 18 files queued and growing. The `WiFiClientSecure` with `setInsecure()` and 45s timeout isn't enough. Possible fixes: increase timeout further, use chunked transfer, try HTTP (non-TLS) proxy, or switch to a simpler endpoint (e.g., Google Forms POST).
+
+3. **BLE connect takes many retries after WiFi** — Scale is found by scan immediately but `_connectTo()` fails 3-7 times before connecting. Likely WiFi/BLE radio contention — the ESP32-S3 shares the 2.4GHz radio. The upload attempt runs WiFi right before BLE connect. Adding a longer delay between WiFi teardown and BLE connect may help.
+
+4. **LVGL graphics corruption** — Still reproducible around screen transitions (ACTIVE → SUCCESS). Symptoms: ghosting, duplicate layers.
+
+5. **BLE disconnection crash** — Pre-existing `LoadProhibited` on unexpected disconnect.
+
+### Recommended Next Steps
+
+1. **Fix Qmax computation** — In `session.cpp::_processWeight()`:
+   - Add `if (instantFlowRate > 50.0f) instantFlowRate = 50.0f;` as a physiological cap
+   - Or compute flow rate over 1-second sliding windows instead of per-sample
+   - Consider ignoring the first 2-3 samples after session start (tare settling)
+
+2. **Debug cloud upload** — Add detailed TLS handshake logging:
+   ```cpp
+   client->setHandshakeTimeout(30); // separate from HTTP timeout
+   ```
+   Try connecting to a simpler HTTPS endpoint first (e.g., httpbin.org) to isolate if it's Google-specific. Consider using HTTP POST to a non-TLS endpoint as fallback.
+
+3. **BLE/WiFi radio handoff** — After `WiFi.mode(WIFI_OFF)`, add `delay(500)` before BLE scan resumes to let the radio fully settle.
+
+4. **Verify 5g threshold in field** — The new 5g start threshold means sessions start as soon as ~5g is on the scale. Verify this doesn't cause false starts from vibration or accidental touches. May need to add a debounce (e.g., 3 consecutive readings above 5g).
+
+### What Was Done March 8 (Previous Session)
+
+- Added flow rate computation (smoothed derivative of cumulative weight, 4-sample MA)
+- Added clinical summary END row in CSV with voided_vol, Qmax, Qave, TQmax, duration
+- Added `flow_rate_ml_s` column to CSV output
+- Renamed device from "PearlsLogger" to "Mongo-Pearl-1"
+- Fixed upload loop bug (break after first attempt instead of retrying infinitely)
+- Built MongoFlo urologist web dashboard (docs/index.html)
+- Enabled GitHub Pages from docs/ folder
+- Fixed boot BLE/WiFi deadlock, config.h WiFi credentials, upload processing, session WiFi check
 
 ## Current State (v1.3 — March 7, 2026)
 
@@ -105,11 +136,13 @@
 ### Key Constants (config.h)
 | Constant | Value | Purpose |
 |---|---|---|
-| `SESSION_START_THRESHOLD_G` | 50.0g | Auto-start measurement |
+| `SESSION_START_THRESHOLD_G` | 5.0g | Auto-start measurement (was 50g, lowered Mar 9) |
 | `SESSION_END_ZERO_G` | 1.0g | Weight "removed" threshold |
 | `WEIGHT_REMOVAL_TIMEOUT_MS` | 5000ms | Sustained zero → end session |
 | `SESSION_TIMEOUT_MS` | 45000ms | No data → end session |
 | `SESSION_MIN_DURATION_MS` | 3000ms | Discard sessions shorter than this |
+| `HEARTBEAT_INTERVAL_MS` | 9000ms | BLE heartbeat to keep Acaia connection alive |
+| `LOG_FLUSH_INTERVAL_MS` | 2000ms | Buffered CSV write flush period |
 
 ### UI Callback System (ui.cpp)
 - `LV_OBJ_FLAG_USER_1` → `on_home_clicked()` (WiFi card on BOOT, home on other screens)
