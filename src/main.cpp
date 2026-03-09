@@ -202,7 +202,7 @@ static bool loadWifiCreds(String &ssidOut, String &passOut) {
       return true;
   }
 
-  if (strcmp(WIFI_SSID, "YourWiFiSSID") != 0) {
+  if (strlen(WIFI_SSID) > 0) {
     ssidOut = WIFI_SSID;
     passOut = WIFI_PASS;
     return true;
@@ -278,6 +278,14 @@ static void processPendingUploads(bool updateUi) {
   if (count <= 0)
     return;
 
+  // Skip uploads entirely if no valid WiFi credentials are configured.
+  String wifiSsid, wifiPass;
+  if (!loadWifiCreds(wifiSsid, wifiPass)) {
+    Serial.printf("[Cloud] No WiFi configured — skipping %d pending uploads\n",
+                  count);
+    return;
+  }
+
   Serial.printf("[Cloud] Pending uploads: %d\n", count);
   if (updateUi) {
     ui_set_boot_status("Syncing pending data...", 0);
@@ -308,6 +316,9 @@ static void processPendingUploads(bool updateUi) {
     }
   }
   writeSyncQueue(keep, keepCount);
+
+  // Resume BLE scanning immediately so loop() doesn't have to wait.
+  gBle.tick();
 }
 
 static bool bleExportSendPacket(uint8_t type, const uint8_t *payload,
@@ -1082,7 +1093,7 @@ void setup() {
   ensurePrefsOpen();
   String storedWifiSsid =
       gPrefsOpen ? gPrefs.getString(NVS_KEY_WIFI_SSID, "") : "";
-  if (storedWifiSsid.length() == 0 && strcmp(WIFI_SSID, "YourWiFiSSID") != 0) {
+  if (storedWifiSsid.length() == 0 && strlen(WIFI_SSID) > 0) {
     storedWifiSsid = WIFI_SSID;
   }
   if (storedWifiSsid.length() > 0) {
@@ -1113,8 +1124,14 @@ void setup() {
   // ── Session init ─────────────────────────────────────────────────────────
   gSession.begin(gTimeSynced, seqNum);
 
-  // ── Retry pending cloud syncs from previous failed/interrupted attempts ──
-  processPendingUploads(true);
+  // ── Pending cloud syncs deferred — BLE connection takes priority at boot.
+  // Uploads will be retried on next boot after a successful session.
+  {
+    static String items[64];
+    int pending = readSyncQueue(items, 64);
+    if (pending > 0)
+      Serial.printf("[Cloud] %d pending uploads — deferred until after BLE connect\n", pending);
+  }
 
   // ── BLE Acaia client init ────────────────────────────────────────────────
   ui_set_boot_status("PREPARING TO CONNECT\nPLEASE TURN ON SCALE", 10);

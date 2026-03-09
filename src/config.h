@@ -6,8 +6,8 @@
 
 // ─── WiFi credentials (for NTP time sync on boot) ───────────────────────────
 // WARNING: do not commit real credentials to a public repository
-#define WIFI_SSID "Jemma-Judo-Net-6"
-#define WIFI_PASS "1MoarFud??"
+#define WIFI_SSID ""
+#define WIFI_PASS ""
 #define WIFI_TIMEOUT_S 12
 
 // Cloud upload endpoint (e.g., a Webhook or API)

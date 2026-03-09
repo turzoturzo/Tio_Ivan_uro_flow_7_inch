@@ -298,7 +298,7 @@ int Session::uploadToGoogleSheet(const String &path) {
 
   String wifiSsid = WIFI_SSID;
   String wifiPass = WIFI_PASS;
-  bool haveCreds = strcmp(WIFI_SSID, "YourWiFiSSID") != 0;
+  bool haveCreds = strlen(WIFI_SSID) > 0;
 
   Preferences prefs;
   if (prefs.begin(NVS_NAMESPACE, true)) {
