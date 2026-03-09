@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MongoFlo — Uroflowmetry Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  /* ── Reset & Base ────────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:      #0A0A0A;
+    --card:    #121212;
+    --border:  #222222;
+    --green:   #00E660;
+    --white:   #F2F2F2;
+    --muted:   #808080;
+    --danger:  #E5484D;
+    --warn:    #F5A623;
+    --font:    'Segoe UI', system-ui, -apple-system, sans-serif;
+    --mono:    'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  }
+  html { font-size: 15px; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--white);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ── Header ──────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+  }
+  .brand h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .brand h1 span { color: var(--green); }
+  .brand .subtitle {
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .header-meta {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-align: right;
+  }
+
+  /* ── Layout ──────────────────────────────────────────────────── */
+  .app {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ─────────────────────────────────────────────────── */
+  .sidebar {
+    width: 300px;
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .sidebar-header h2 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .session-count {
+    font-size: 0.75rem;
+    color: var(--muted);
+    background: var(--card);
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+  }
+  .session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+  }
+  .session-list::-webkit-scrollbar { width: 4px; }
+  .session-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .date-group-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 0.75rem 0.5rem 0.3rem;
+    font-weight: 600;
+  }
+
+  .session-item {
+    padding: 0.6rem 0.75rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 2px;
+  }
+  .session-item:hover { background: var(--card); }
+  .session-item.active {
+    background: var(--card);
+    border: 1px solid var(--green);
+  }
+  .session-item .time {
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  .session-item .meta {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.2rem;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .session-item .meta .val { color: var(--white); font-weight: 500; }
+
+  /* ── Main Content ────────────────────────────────────────────── */
+  .main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
+
+  /* ── Empty / Loading State ───────────────────────────────────── */
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    gap: 0.75rem;
+  }
+  .empty-state .icon { font-size: 3rem; opacity: 0.4; }
+  .empty-state p { font-size: 0.9rem; }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 3px solid var(--border);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Stat Cards ──────────────────────────────────────────────── */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75rem;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.9rem 1rem;
+  }
+  .stat-card .label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.3rem;
+  }
+  .stat-card .value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    font-family: var(--mono);
+    line-height: 1.1;
+  }
+  .stat-card .unit {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-weight: 400;
+    margin-left: 0.2rem;
+  }
+  .stat-card.normal .value  { color: var(--green); }
+  .stat-card.warn .value    { color: var(--warn); }
+  .stat-card.danger .value  { color: var(--danger); }
+  .stat-card.neutral .value { color: var(--white); }
+
+  /* ── Charts ──────────────────────────────────────────────────── */
+  .chart-container {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem 1.25rem;
+  }
+  .chart-container h3 {
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.75rem;
+  }
+  .chart-wrap {
+    position: relative;
+    height: 280px;
+  }
+
+  /* ── Trend Tab ───────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .tab-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-size: 0.8rem;
+    padding: 0.4rem 1rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .tab-btn:hover { color: var(--white); }
+  .tab-btn.active {
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: flex; flex-direction: column; gap: 1.25rem; }
+
+  /* ── Reliability Warning ─────────────────────────────────────── */
+  .warning-banner {
+    background: rgba(245, 166, 35, 0.1);
+    border: 1px solid rgba(245, 166, 35, 0.3);
+    border-radius: 6px;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--warn);
+    display: none;
+  }
+
+  /* ── Responsive ──────────────────────────────────────────────── */
+  @media (max-width: 900px) {
+    .app { flex-direction: column; }
+    .sidebar {
+      width: 100%;
+      max-height: 200px;
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
+    .session-list { display: flex; overflow-x: auto; overflow-y: hidden; gap: 0.5rem; padding: 0.5rem; }
+    .session-item { min-width: 180px; flex-shrink: 0; }
+    .date-group-label { display: none; }
+    .stat-row { grid-template-columns: repeat(3, 1fr); }
+  }
+  @media (max-width: 600px) {
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+    .chart-wrap { height: 220px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <h1>Mongo<span>Flo</span></h1>
+    <span class="subtitle">Uroflowmetry Dashboard</span>
+  </div>
+  <div class="header-meta" id="headerMeta"></div>
+</header>
+
+<div class="app">
+  <!-- Sidebar: Session List -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h2>Sessions</h2>
+      <span class="session-count" id="sessionCount">—</span>
+    </div>
+    <div class="session-list" id="sessionList">
+      <div class="empty-state">
+        <div class="spinner"></div>
+        <p>Loading sessions…</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main: Detail View -->
+  <main class="main" id="mainContent">
+    <div class="empty-state" id="emptyState">
+      <div class="icon">📊</div>
+      <p>Select a session to view flow curves</p>
+    </div>
+
+    <!-- Session Detail (hidden until selection) -->
+    <div id="sessionDetail" style="display:none;">
+
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="detail">Session Detail</button>
+        <button class="tab-btn" data-tab="trends">Trends</button>
+      </div>
+
+      <!-- Detail Tab -->
+      <div class="tab-content active" id="tab-detail">
+        <div class="warning-banner" id="volumeWarning">
+          ⚠ Voided volume &lt; 150 mL — test may not be clinically reliable (ICS guideline)
+        </div>
+
+        <div class="stat-row" id="statCards"></div>
+
+        <div class="chart-container">
+          <h3>Flow Rate Curve</h3>
+          <div class="chart-wrap">
+            <canvas id="flowChart"></canvas>
+          </div>
+        </div>
+
+        <div class="chart-container">
+          <h3>Voided Volume</h3>
+          <div class="chart-wrap">
+            <canvas id="volumeChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Trends Tab -->
+      <div class="tab-content" id="tab-trends">
+        <div class="chart-container">
+          <h3>Peak Flow Rate (Qmax) Over Time</h3>
+          <div class="chart-wrap">
+            <canvas id="trendQmaxChart"></canvas>
+          </div>
+        </div>
+        <div class="chart-container">
+          <h3>Voided Volume Over Time</h3>
+          <div class="chart-wrap">
+            <canvas id="trendVolumeChart"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════════════
+//  MongoFlo Dashboard — reads from Google Sheets, zero backend
+// ══════════════════════════════════════════════════════════════════
+
+const SHEET_ID = '13GgL3II3EnMdy1FDMWBP2TSP-Ivz64TgDjEEbOc8SYc';
+const COLORS = {
+  green: '#00E660', white: '#F2F2F2', muted: '#808080',
+  border: '#222222', card: '#121212', danger: '#E5484D', warn: '#F5A623',
+  greenFill: 'rgba(0, 230, 96, 0.15)', greenLine: 'rgba(0, 230, 96, 0.8)',
+  blueLine: 'rgba(96, 165, 250, 0.8)', blueFill: 'rgba(96, 165, 250, 0.1)',
+};
+
+// ── State ─────────────────────────────────────────────────────────
+let allSessions = [];     // [{filename, startTime, rows:[{t_ms, weight_g, cumulative_g}], stats:{...}}]
+let activeSessionIdx = -1;
+let flowChartInst = null;
+let volumeChartInst = null;
+let trendQmaxInst = null;
+let trendVolumeInst = null;
+
+// ── Data Loading ──────────────────────────────────────────────────
+async function loadSheetData() {
+  const url = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json`;
+  const resp = await fetch(url);
+  let text = await resp.text();
+  // Strip JSONP wrapper: "google.visualization.Query.setResponse({...})"
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  text = text.substring(start, end + 1);
+  const json = JSON.parse(text);
+
+  const rows = json.table.rows;
+  const grouped = {};
+
+  for (const row of rows) {
+    const cells = row.c;
+    if (!cells || cells.length < 5) continue;
+
+    const filename = cells[0]?.v || '';
+    const colB = String(cells[1]?.v ?? '');
+    // Skip metadata rows (comments like "# fw_version=1.0.0")
+    if (colB.startsWith('#')) continue;
+
+    const t_ms = parseFloat(colB);
+    if (isNaN(t_ms)) continue;
+
+    const ts_utc   = cells[2]?.v || '';
+    const weight_g  = parseFloat(cells[3]?.v ?? 0);
+    const cumul_g   = parseFloat(cells[4]?.v ?? 0);
+    const event     = cells[5]?.v || '';
+
+    if (!grouped[filename]) {
+      grouped[filename] = { filename, startTime: null, rows: [] };
+    }
+
+    if (event === 'START') {
+      grouped[filename].startTime = ts_utc;
+    }
+
+    grouped[filename].rows.push({ t_ms, weight_g, cumulative_g: cumul_g, event });
+  }
+
+  // Convert to array, sort by start time descending (newest first)
+  allSessions = Object.values(grouped)
+    .filter(s => s.rows.length > 3) // drop trivial sessions
+    .map(s => {
+      s.rows.sort((a, b) => a.t_ms - b.t_ms);
+      s.stats = computeStats(s.rows);
+      return s;
+    })
+    .sort((a, b) => {
+      const ta = a.startTime || a.filename;
+      const tb = b.startTime || b.filename;
+      return tb.localeCompare(ta);
+    });
+}
+
+// ── Clinical Parameter Computation ────────────────────────────────
+function computeStats(rows) {
+  // Filter to data rows only (exclude START/END events with 0 weight)
+  const data = rows.filter(r => !r.event || r.event === '');
+  if (data.length < 2) return { qmax: 0, qave: 0, volume: 0, tqmax: 0, duration: 0, flowRates: [], times: [] };
+
+  // Compute flow rates (derivative of cumulative_g, smoothed)
+  const flowRates = [];
+  const rawRates = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i === 0) { rawRates.push(0); continue; }
+    const dt = (data[i].t_ms - data[i-1].t_ms) / 1000; // seconds
+    if (dt <= 0) { rawRates.push(rawRates[rawRates.length - 1] || 0); continue; }
+    const dv = data[i].cumulative_g - data[i-1].cumulative_g;
+    let rate = dv / dt; // mL/s
+    if (rate < 0) rate = 0;
+    rawRates.push(rate);
+  }
+
+  // 3-sample moving average
+  for (let i = 0; i < rawRates.length; i++) {
+    const start = Math.max(0, i - 2);
+    let sum = 0, count = 0;
+    for (let j = start; j <= i; j++) { sum += rawRates[j]; count++; }
+    flowRates.push(sum / count);
+  }
+
+  const times = data.map(r => r.t_ms / 1000); // seconds
+
+  let qmax = 0, tqmax = 0;
+  for (let i = 0; i < flowRates.length; i++) {
+    if (flowRates[i] > qmax) {
+      qmax = flowRates[i];
+      tqmax = times[i];
+    }
+  }
+
+  const volume = data[data.length - 1].cumulative_g;
+  const duration = (data[data.length - 1].t_ms - data[0].t_ms) / 1000;
+  const qave = duration > 0 ? volume / duration : 0;
+
+  return { qmax, qave, volume, tqmax, duration, flowRates, times, data };
+}
+
+// ── Render Session List ───────────────────────────────────────────
+function renderSessionList() {
+  const list = document.getElementById('sessionList');
+  const countEl = document.getElementById('sessionCount');
+  countEl.textContent = allSessions.length;
+
+  if (allSessions.length === 0) {
+    list.innerHTML = '<div class="empty-state"><p>No sessions found</p></div>';
+    return;
+  }
+
+  let html = '';
+  let lastDate = '';
+
+  allSessions.forEach((s, idx) => {
+    const dt = parseSessionDate(s);
+    const dateStr = dt ? dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'Unknown';
+    const timeStr = dt ? dt.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : s.filename;
+
+    if (dateStr !== lastDate) {
+      html += `<div class="date-group-label">${dateStr}</div>`;
+      lastDate = dateStr;
+    }
+
+    const vol = s.stats.volume.toFixed(0);
+    const qmax = s.stats.qmax.toFixed(1);
+
+    html += `
+      <div class="session-item" data-idx="${idx}" onclick="selectSession(${idx})">
+        <div class="time">${timeStr}</div>
+        <div class="meta">
+          <span>Vol: <span class="val">${vol} mL</span></span>
+          <span>Qmax: <span class="val">${qmax}</span></span>
+        </div>
+      </div>`;
+  });
+
+  list.innerHTML = html;
+  document.getElementById('headerMeta').textContent =
+    `${allSessions.length} sessions · Device: Mongo-Pearl-1`;
+}
+
+function parseSessionDate(s) {
+  if (s.startTime) {
+    const d = new Date(s.startTime);
+    if (!isNaN(d.getTime())) return d;
+  }
+  // Fallback: parse from filename pearls_YYYYMMDD_HHMMSS.csv
+  const m = s.filename.match(/(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})/);
+  if (m) return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`);
+  return null;
+}
+
+// ── Select & Render Session ───────────────────────────────────────
+function selectSession(idx) {
+  activeSessionIdx = idx;
+  const s = allSessions[idx];
+
+  // Update sidebar active state
+  document.querySelectorAll('.session-item').forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+  });
+
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('sessionDetail').style.display = '';
+
+  renderStatCards(s.stats);
+  renderFlowChart(s.stats);
+  renderVolumeChart(s.stats);
+  renderTrends();
+
+  // Show volume warning if < 150 mL
+  document.getElementById('volumeWarning').style.display =
+    s.stats.volume < 150 ? 'block' : 'none';
+}
+
+// ── Stat Cards ────────────────────────────────────────────────────
+function renderStatCards(stats) {
+  const cards = [
+    { label: 'Peak Flow (Qmax)', value: stats.qmax.toFixed(1), unit: 'mL/s',
+      status: stats.qmax >= 15 ? 'normal' : stats.qmax >= 10 ? 'warn' : 'danger' },
+    { label: 'Avg Flow (Qave)', value: stats.qave.toFixed(1), unit: 'mL/s',
+      status: stats.qave >= 8 ? 'normal' : stats.qave >= 5 ? 'warn' : 'danger' },
+    { label: 'Voided Volume', value: stats.volume.toFixed(0), unit: 'mL',
+      status: stats.volume >= 150 ? 'normal' : 'warn' },
+    { label: 'Time to Peak', value: stats.tqmax.toFixed(1), unit: 's', status: 'neutral' },
+    { label: 'Duration', value: stats.duration.toFixed(1), unit: 's', status: 'neutral' },
+  ];
+
+  document.getElementById('statCards').innerHTML = cards.map(c => `
+    <div class="stat-card ${c.status}">
+      <div class="label">${c.label}</div>
+      <div class="value">${c.value}<span class="unit">${c.unit}</span></div>
+    </div>
+  `).join('');
+}
+
+// ── Flow Rate Chart ───────────────────────────────────────────────
+function renderFlowChart(stats) {
+  if (flowChartInst) flowChartInst.destroy();
+  const ctx = document.getElementById('flowChart').getContext('2d');
+
+  // Find Qmax index for annotation
+  let qmaxIdx = 0;
+  for (let i = 1; i < stats.flowRates.length; i++) {
+    if (stats.flowRates[i] > stats.flowRates[qmaxIdx]) qmaxIdx = i;
+  }
+
+  flowChartInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: stats.times.map(t => t.toFixed(1)),
+      datasets: [{
+        label: 'Flow Rate (mL/s)',
+        data: stats.flowRates,
+        borderColor: COLORS.greenLine,
+        backgroundColor: COLORS.greenFill,
+        fill: true,
+        tension: 0.35,
+        pointRadius: 0,
+        pointHitRadius: 8,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1a1a1a',
+          borderColor: COLORS.border,
+          borderWidth: 1,
+          titleColor: COLORS.muted,
+          bodyColor: COLORS.white,
+          callbacks: {
+            title: (items) => `Time: ${items[0].label} s`,
+            label: (item) => `Flow: ${item.parsed.y.toFixed(2)} mL/s`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Time (s)', color: COLORS.muted, font: { size: 11 } },
+          ticks: { color: COLORS.muted, maxTicksLimit: 12, font: { size: 10 } },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+        },
+        y: {
+          title: { display: true, text: 'Flow Rate (mL/s)', color: COLORS.muted, font: { size: 11 } },
+          ticks: { color: COLORS.muted, font: { size: 10 } },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+          beginAtZero: true,
+        }
+      }
+    }
+  });
+}
+
+// ── Volume Chart ──────────────────────────────────────────────────
+function renderVolumeChart(stats) {
+  if (volumeChartInst) volumeChartInst.destroy();
+  const ctx = document.getElementById('volumeChart').getContext('2d');
+  const cumulData = stats.data ? stats.data.map(r => r.cumulative_g) : [];
+
+  volumeChartInst = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: stats.times.map(t => t.toFixed(1)),
+      datasets: [{
+        label: 'Volume (mL)',
+        data: cumulData,
+        borderColor: COLORS.blueLine,
+        backgroundColor: COLORS.blueFill,
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHitRadius: 8,
+        borderWidth: 2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1a1a1a',
+          borderColor: COLORS.border,
+          borderWidth: 1,
+          titleColor: COLORS.muted,
+          bodyColor: COLORS.white,
+          callbacks: {
+            title: (items) => `Time: ${items[0].label} s`,
+            label: (item) => `Volume: ${item.parsed.y.toFixed(1)} mL`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          title: { display: true, text: 'Time (s)', color: COLORS.muted, font: { size: 11 } },
+          ticks: { color: COLORS.muted, maxTicksLimit: 12, font: { size: 10 } },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+        },
+        y: {
+          title: { display: true, text: 'Volume (mL)', color: COLORS.muted, font: { size: 11 } },
+          ticks: { color: COLORS.muted, font: { size: 10 } },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+          beginAtZero: true,
+        }
+      }
+    }
+  });
+}
+
+// ── Trend Charts ──────────────────────────────────────────────────
+function renderTrends() {
+  // Prepare trend data (all sessions, chronological order)
+  const sorted = [...allSessions].reverse(); // oldest first for trends
+  const labels = sorted.map(s => {
+    const dt = parseSessionDate(s);
+    return dt ? dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '?';
+  });
+  const qmaxData = sorted.map(s => s.stats.qmax);
+  const volumeData = sorted.map(s => s.stats.volume);
+
+  // Qmax trend
+  if (trendQmaxInst) trendQmaxInst.destroy();
+  trendQmaxInst = new Chart(document.getElementById('trendQmaxChart').getContext('2d'), {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'Qmax (mL/s)',
+        data: sorted.map((s, i) => ({ x: i, y: s.stats.qmax })),
+        backgroundColor: COLORS.green,
+        borderColor: COLORS.greenLine,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1a1a1a',
+          borderColor: COLORS.border,
+          borderWidth: 1,
+          callbacks: {
+            title: (items) => labels[items[0].parsed.x] || '',
+            label: (item) => `Qmax: ${item.parsed.y.toFixed(1)} mL/s`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          ticks: {
+            color: COLORS.muted,
+            callback: (val) => labels[val] || '',
+            font: { size: 10 },
+          },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+        },
+        y: {
+          title: { display: true, text: 'Qmax (mL/s)', color: COLORS.muted, font: { size: 11 } },
+          ticks: { color: COLORS.muted, font: { size: 10 } },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+          beginAtZero: true,
+        }
+      }
+    }
+  });
+
+  // Volume trend
+  if (trendVolumeInst) trendVolumeInst.destroy();
+  trendVolumeInst = new Chart(document.getElementById('trendVolumeChart').getContext('2d'), {
+    type: 'scatter',
+    data: {
+      datasets: [{
+        label: 'Volume (mL)',
+        data: sorted.map((s, i) => ({ x: i, y: s.stats.volume })),
+        backgroundColor: COLORS.blueLine,
+        borderColor: COLORS.blueLine,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1a1a1a',
+          borderColor: COLORS.border,
+          borderWidth: 1,
+          callbacks: {
+            title: (items) => labels[items[0].parsed.x] || '',
+            label: (item) => `Volume: ${item.parsed.y.toFixed(0)} mL`,
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          ticks: {
+            color: COLORS.muted,
+            callback: (val) => labels[val] || '',
+            font: { size: 10 },
+          },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+        },
+        y: {
+          title: { display: true, text: 'Volume (mL)', color: COLORS.muted, font: { size: 11 } },
+          ticks: { color: COLORS.muted, font: { size: 10 } },
+          grid: { color: 'rgba(34,34,34,0.5)' },
+          beginAtZero: true,
+        }
+      }
+    }
+  });
+}
+
+// ── Tab Switching ─────────────────────────────────────────────────
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// ── Init ──────────────────────────────────────────────────────────
+(async function init() {
+  try {
+    await loadSheetData();
+    renderSessionList();
+    // Auto-select most recent session
+    if (allSessions.length > 0) selectSession(0);
+  } catch (err) {
+    console.error('Failed to load data:', err);
+    document.getElementById('sessionList').innerHTML =
+      `<div class="empty-state"><p style="color:var(--danger)">Failed to load data.<br>${err.message}</p></div>`;
+  }
+})();
+</script>
+
+</body>
+</html>
