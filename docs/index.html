@@ -508,8 +508,9 @@ async function loadSheetData() {
 
 // ── Clinical Parameter Computation ────────────────────────────────
 function computeStats(rows) {
-  // Filter to data rows only (exclude START/END events with 0 weight)
-  const data = rows.filter(r => !r.event || r.event === '');
+  // Filter to data rows only (exclude START/END summary events).
+  // Event column may contain "0" (numeric zero from Sheet) — treat as no event.
+  const data = rows.filter(r => !r.event || r.event === '' || r.event === '0' || !isNaN(r.event));
   if (data.length < 2) return { qmax: 0, qave: 0, volume: 0, tqmax: 0, duration: 0, flowRates: [], times: [] };
 
   // Compute flow rates (derivative of cumulative_g, smoothed)
