@@ -458,25 +458,24 @@ async function loadSheetData() {
 
   for (const row of rows) {
     const cells = row.c;
-    if (!cells || cells.length < 5) continue;
+    if (!cells || cells.length < 6) continue;
 
-    const filename = cells[0]?.v || '';
-    const colB = String(cells[1]?.v ?? '');
+    // Google Sheet columns (written by Apps Script doPost):
+    //   A=Filename, B=Device Name, C=Timestamp(UTC), D=Elapsed(ms), E=Weight(g), F=Cumulative(g), G=Event
+    const filename   = cells[0]?.v || '';
+    const deviceName = String(cells[1]?.v ?? '');
+    const ts_utc     = cells[2]?.v || '';
+    const t_ms       = parseFloat(cells[3]?.v ?? 0);
+    const weight_g   = parseFloat(cells[4]?.v ?? 0);
+    const cumul_g    = parseFloat(cells[5]?.v ?? 0);
+    const event      = String(cells[6]?.v ?? '');
 
-    // Skip metadata rows (comments like "# fw_version=1.0.0")
-    // Note: column B is number-typed so metadata text appears as NaN
-    if (colB.startsWith('#') || colB === 'null' || colB === 'undefined') continue;
-
-    const t_ms = parseFloat(colB);
+    // Skip metadata rows or header
+    if (filename.startsWith('#') || filename === 'Filename') continue;
     if (isNaN(t_ms)) continue;
 
-    const ts_utc   = cells[2]?.v || '';
-    const weight_g  = parseFloat(cells[3]?.v ?? 0);
-    const cumul_g   = parseFloat(cells[4]?.v ?? 0);
-    const event     = cells[5]?.v || '';
-
     if (!grouped[filename]) {
-      grouped[filename] = { filename, startTime: null, deviceName: deviceNameFromFilename(filename), rows: [] };
+      grouped[filename] = { filename, startTime: null, deviceName: deviceName || deviceNameFromFilename(filename), rows: [] };
     }
 
     if (event === 'START') {
