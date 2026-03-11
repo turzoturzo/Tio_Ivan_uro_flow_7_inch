@@ -1,0 +1,6 @@
+name = "mongoflo-relay"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+[vars]
+GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzdgWR0lG1M0eVomucSJjMVJhUwZSBrbEnBmsNzCr3cSxjeBzTgRcWdZDKyW7urDCTKvQ/exec"
