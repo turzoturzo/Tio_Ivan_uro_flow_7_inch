@@ -30,6 +30,21 @@
 - User redeployed via Apps Script editor with Execute as: Me, Access: Anyone
 - New deployment ID in `wrangler.toml`
 
+#### Dashboard Fixes — FIXED ✅
+- **Column mapping:** Dashboard was reading old 5-column layout; updated to match new 7-column Sheet format (Filename, Device Name, Timestamp, Elapsed, Weight, Cumulative, Event)
+- **Event filter bug:** Data rows had numeric `0` in event column; `String(0)` = `"0"` is truthy, so all data rows were filtered out. Fixed by treating `"0"` as a data row.
+- **Files:** `docs/index.html`
+
+#### Qmax Spike Bug — FIXED ✅
+- **Root cause:** Instantaneous flow rate from single BLE sample deltas (~150ms apart) creates spikes when liquid hits scale suddenly or scale is bumped. Produced values like 2900+ mL/s (normal is 15-40 mL/s).
+- **Fix:** Capped `QMAX_PHYSIOLOGICAL_CAP` at 50 mL/s in firmware (`src/session.cpp`) and dashboard (`docs/index.html`).
+- **Files:** `src/session.cpp`, `docs/index.html`
+
+#### WiFi Boot Failure — OBSERVED, NOT YET FIXED
+- WiFi connect fails on some boots (`[Cloud] WiFi connect failed`), preventing upload queue drain
+- WiFi network is stable; may be timing/init order issue
+- Needs investigation next session
+
 ### OPEN: UI Display Tearing 🔴
 - **Symptom:** Text ghosting, duplicate elements, offset labels during ACTIVE screen (weight updates + chart drawing). Partially improved on boot/idle screens.
 - **Root cause:** PSRAM bandwidth contention between LVGL draw buffer writes and RGB panel DMA reads. The `full_refresh = 1` in `display.cpp` line 242 was disabled (set to 0) which helped static screens, but ACTIVE screen still tears during rapid updates.
@@ -42,10 +57,11 @@
   5. Reduce chart point count or simplify ACTIVE screen layout
 - **Key file:** `src/display.cpp` — draw buffer allocation ~line 220, flush callback, bounce buffer config
 
-### Previous Known Issues (Still Open)
-1. **Qmax spike bug** — Flow rate computation produces unrealistic peaks. Needs physiological cap or 1-second windowed calculation.
-2. **BLE disconnection crash** — `LoadProhibited` on unexpected disconnect.
-3. **BLE Export Mode crash** — NimBLE re-init assert failure.
+### Remaining Known Issues (Priority Order)
+1. **UI Display Tearing** — See OPEN section above. Primary next-session task.
+2. **WiFi boot failure** — Intermittent, blocks upload queue drain. Investigate init order.
+3. **BLE disconnection crash** — `LoadProhibited` on unexpected disconnect.
+4. **BLE Export Mode crash** — NimBLE re-init assert failure.
 
 ### What Was Done Today (March 9)
 
