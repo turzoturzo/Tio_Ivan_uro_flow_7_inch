@@ -139,6 +139,7 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
       float dVol = _cumulativeWeight - _prevCumulativeForFlow;  // mL (≈ g)
       instantFlowRate = (dVol / (float)dt_ms) * 1000.0f;  // mL/s
       if (instantFlowRate < 0.0f) instantFlowRate = 0.0f;
+      if (instantFlowRate > 50.0f) instantFlowRate = 50.0f; // physiological cap
     }
   }
   _prevFlowCalcMs = millis();
