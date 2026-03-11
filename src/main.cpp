@@ -315,12 +315,8 @@ static void processPendingUploads(bool updateUi) {
         break;
       }
     }
-    // Only attempt ONE upload per boot — keep BLE connection fast.
-    // Preserve remaining files for next boot.
-    for (int j = i + 1; j < count && keepCount < 64; ++j) {
-      keep[keepCount++] = items[j];
-    }
-    break;
+    // With the Cloudflare Worker relay (~1s per upload), drain all pending files.
+    // WiFi failure above already breaks out of the loop.
   }
   writeSyncQueue(keep, keepCount);
 
@@ -1142,8 +1138,70 @@ void setup() {
   // ── Session init ─────────────────────────────────────────────────────────
   gSession.begin(gTimeSynced, seqNum);
 
-  // ── Retry ONE pending cloud upload (limit to 1 to keep boot fast for BLE).
-  processPendingUploads(true);
+  // ── Drain all pending cloud uploads (Worker relay responds in ~1s each).
+  // BLE hasn't started yet, so skip pauseForWifi — radio is free.
+  {
+    static String items[64];
+    static String keep[64];
+    int count = readSyncQueue(items, 64);
+
+    // If sync queue is empty but CSV files exist, rebuild queue from filesystem.
+    // This handles the case where files were saved but never queued (e.g., prior
+    // firmware that only queued one at a time, or queue file got wiped).
+    if (count == 0) {
+      File root = FFat.open("/");
+      if (root && root.isDirectory()) {
+        File entry;
+        while ((entry = root.openNextFile()) && count < 64) {
+          String name = String("/") + entry.name();
+          entry.close();
+          if (name.endsWith(".csv") && name != "/current.tmp") {
+            items[count++] = name;
+          }
+        }
+        root.close();
+      }
+      if (count > 0) {
+        Serial.printf("[Cloud] Rebuilt sync queue from %d CSV files on disk\n", count);
+        writeSyncQueue(items, count);
+      }
+    }
+    if (count > 0) {
+      String wifiSsid, wifiPass;
+      if (loadWifiCreds(wifiSsid, wifiPass)) {
+        Serial.printf("[Cloud] Draining %d pending uploads at boot...\n", count);
+        ui_set_boot_status("Syncing pending data...", 0);
+        int keepCount = 0;
+        for (int i = 0; i < count; ++i) {
+          const String &path = items[i];
+          if (!FFat.exists(path)) {
+            Serial.printf("[Cloud] Pending file missing, dropping: %s\n", path.c_str());
+            continue;
+          }
+          int rc = gSession.uploadToGoogleSheet(path);
+          if (rc == 1) {
+            Serial.printf("[Cloud] Synced: %s\n", path.c_str());
+          } else {
+            keep[keepCount++] = path;
+            Serial.printf("[Cloud] Keep pending (rc=%d): %s\n", rc, path.c_str());
+            if (rc == 0) {
+              Serial.println("[Cloud] WiFi failed, deferring remaining uploads");
+              for (int j = i + 1; j < count && keepCount < 64; ++j) {
+                keep[keepCount++] = items[j];
+              }
+              break;
+            }
+          }
+        }
+        writeSyncQueue(keep, keepCount);
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        delay(100); // let radio settle before BLE starts
+      } else {
+        Serial.printf("[Cloud] No WiFi configured — skipping %d pending uploads\n", count);
+      }
+    }
+  }
 
   // ── BLE Acaia client init ────────────────────────────────────────────────
   ui_set_boot_status("Scanning for scale...", 0);

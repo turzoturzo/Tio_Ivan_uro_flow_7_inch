@@ -207,21 +207,26 @@ void Display::begin() {
   // ── LVGL Init ─────────────────────────────────────────────────────────────
   lv_init();
 
-  // Draw buffer in PSRAM (e.g. 1/10th of screen size = 800 * 48 * 2 bytes =
-  // ~76KB)
-  size_t buf_size = 800 * 48;
+  // Draw buffers in **internal SRAM** to avoid PSRAM bandwidth contention with
+  // the RGB panel DMA.  PSRAM draw buffers cause tearing/ghosting during rapid
+  // UI updates (ACTIVE screen chart + weight).  Two 16KB buffers (800×10 lines
+  // each) fit comfortably in the ~200KB of free internal SRAM.
+  size_t buf_size = 800 * 10;
   lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(
-      buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+      buf_size * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(
-      buf_size * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+      buf_size * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
   if (!buf1 || !buf2) {
-    Serial.println("[LVGL] PSRAM allocation failed! Falling back to SRAM");
+    Serial.println("[LVGL] Internal SRAM alloc failed, trying PSRAM fallback");
     if (buf1)
       heap_caps_free(buf1);
     if (buf2)
       heap_caps_free(buf2);
-    buf1 = (lv_color_t *)malloc(buf_size * sizeof(lv_color_t));
-    buf2 = (lv_color_t *)malloc(buf_size * sizeof(lv_color_t));
+    buf_size = 800 * 48;
+    buf1 = (lv_color_t *)heap_caps_malloc(buf_size * sizeof(lv_color_t),
+                                          MALLOC_CAP_SPIRAM);
+    buf2 = (lv_color_t *)heap_caps_malloc(buf_size * sizeof(lv_color_t),
+                                          MALLOC_CAP_SPIRAM);
   }
   if (!buf1 || !buf2) {
     Serial.println("[LVGL] ERROR: draw buffer allocation failed");
@@ -238,8 +243,10 @@ void Display::begin() {
   disp_drv.flush_cb = my_disp_flush;
   disp_drv.draw_buf = &draw_buf;
   disp_drv.user_data = _gfx;
-  // Safer on this RGB path: redraw whole frame to avoid transitional artifacts.
-  disp_drv.full_refresh = 1;
+  // full_refresh = 1 causes PSRAM bandwidth contention with RGB DMA, producing
+  // ghosting / duplicate-text artifacts.  Partial updates are fine with the
+  // double-buffered bounce-buffer path we already use.
+  disp_drv.full_refresh = 0;
   lv_disp_drv_register(&disp_drv);
 
   static lv_indev_drv_t indev_drv;

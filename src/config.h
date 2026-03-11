@@ -10,11 +10,9 @@
 #define WIFI_PASS ""
 #define WIFI_TIMEOUT_S 12
 
-// Cloud upload endpoint (e.g., a Webhook or API)
+// Cloud upload endpoint — Cloudflare Worker relay (ESP32 can't talk to Google directly)
 #define CLOUD_UPLOAD_URL                                                       \
-  "https://script.google.com/macros/s/"                                        \
-  "AKfycbwt8VMsRdyy_8KSigtyUo8gjyx9N1xk6sx3Ueue-DKrIPoGJcNuaZi-"               \
-  "9OjitMhbPiJkvw/exec"
+  "https://mongoflo-relay.black-heart-3a5a.workers.dev"
 
 // ─── Acaia Pearl S BLE ───────────────────────────────────────────────────────
 #define ACAIA_SEARCH_NAME "ACAIA" // substring match on advertised name

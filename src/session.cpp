@@ -452,29 +452,23 @@ int Session::uploadToGoogleSheet(const String &path) {
     return -1;
   }
   client->setInsecure();
-  // NetworkClient::setTimeout() takes MILLISECONDS. Set to 60s for socket reads.
-  client->setTimeout(60000);
-
+  client->setTimeout(15000);
   // HTTPClient::setTimeout() takes uint16_t ms — max 65535!
-  // 90000 overflows to 24464 (~25s). Use 60000 (fits uint16_t).
-  http->setTimeout(60000);
-  // Don't follow redirects. Google Apps Script returns 302 after processing;
-  // following it opens a second TLS connection to googleusercontent.com which
-  // stalls on ESP32. Treat 302 as success (data was already processed).
+  http->setTimeout(15000);
+  http->setConnectTimeout(10000);
+  // No redirects needed — Cloudflare Worker returns 200 directly.
   http->setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
 
-  // Build URL with parameters
-  String url = String(CLOUD_UPLOAD_URL);
-  url += (url.indexOf('?') >= 0) ? "&" : "?";
-  url += "filename=";
+  // Build path with query parameters
   String filename = path;
   if (filename.startsWith("/"))
     filename = filename.substring(1);
-  url += filename;
-  url += "&device_name=";
-  url += String(DEVICE_NAME);
+  String urlPath = "/?filename=" + filename + "&device_name=" + String(DEVICE_NAME);
 
-  if (!http->begin(*client, url)) {
+  String url = String(CLOUD_UPLOAD_URL) + urlPath; // for logging
+
+  // Use explicit host/port/path form to avoid DNS parsing issues with long URLs.
+  if (!http->begin(*client, "mongoflo-relay.black-heart-3a5a.workers.dev", 443, urlPath, true)) {
     Serial.println("[Cloud] ERROR: HTTP begin failed");
     f.close();
     http->end();
@@ -487,6 +481,7 @@ int Session::uploadToGoogleSheet(const String &path) {
   http->addHeader("Content-Type", "text/plain");
   http->addHeader("User-Agent", "ESP32-MongoFlo/1.4");
   http->addHeader("Accept", "*/*");
+  http->addHeader("Connection", "close");
   http->setReuse(false);
 
   Serial.printf("[Cloud] WiFi IP: %s\n", WiFi.localIP().toString().c_str());
@@ -509,17 +504,19 @@ int Session::uploadToGoogleSheet(const String &path) {
   body = buf;
   free(buf);
 
-  Serial.printf("[Cloud] POST %u bytes...\n", body.length());
+  Serial.printf("[Cloud] POST %u bytes to %s\n", body.length(), url.c_str());
   uint32_t postStart = millis();
   int httpCode = http->POST(body);
+  uint32_t elapsed = millis() - postStart;
   Serial.printf("[Cloud] POST returned in %lu ms, code: %d\n",
-                (unsigned long)(millis() - postStart), httpCode);
+                (unsigned long)elapsed, httpCode);
 
-  // 302 = Google processed the data and is redirecting to result page.
-  bool success = (httpCode == 200 || httpCode == 302);
+  // 200 = Cloudflare Worker accepted and forwarded to Google Apps Script.
+  bool success = (httpCode == 200);
 
   if (success) {
-    Serial.println("[Cloud] Upload SUCCESS");
+    String resp = http->getString();
+    Serial.printf("[Cloud] Upload SUCCESS: %s\n", resp.c_str());
   } else {
     Serial.printf("[Cloud] Upload FAILED, code: %d\n", httpCode);
     if (httpCode < 0) {
