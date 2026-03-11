@@ -32,6 +32,7 @@ public:
     _sessionStartMs = 0;
     _lastWeightMs = millis();
     _lastRelativeWeight = 0.0f;
+    _preTareWeight = 0.0f;
     _sessionTareWeight = 0.0f;
     _prevRawWeight = 0.0f;
     _cumulativeWeight = 0.0f;
@@ -43,6 +44,7 @@ public:
   // Manually trigger a session start (Touch override)
   void forceStart() {
     if (_state == State::IDLE) {
+      _preTareWeight = _lastWeight; // manual start: tare at current weight
       _startSession();
     }
   }
@@ -67,6 +69,8 @@ public:
   String lastSavedName() const { return _lastSavedName; }
   float cumulativeWeight() const { return _cumulativeWeight; }
   float lastFlowRate() const { return _lastFlowRate; }
+  void setManualMode(bool m) { _manualMode = m; }
+  bool manualMode() const { return _manualMode; }
   uint32_t elapsedSeconds() const { return elapsedMs() / 1000; }
   int uploadToGoogleSheet(const String &path);
 
@@ -96,6 +100,7 @@ private:
   time_t _sessionStartEpoch;
   uint32_t _lastWeightMs;
   float _lastWeight;
+  float _preTareWeight;  // last weight reading below start threshold (pre-tare baseline)
   float _lastRelativeWeight;
   float _prevRawWeight;
   float _cumulativeWeight;
@@ -113,6 +118,7 @@ private:
   uint32_t
       _weightBelowThresholdMs; // 0 = above threshold; millis() when went below
   bool _hasExceededStartThreshold; // true once weight has gone above SESSION_START_THRESHOLD_G
+  bool _manualMode;  // when true, suppress auto-start from weight threshold
 
   // Captured at session end — valid when state() == ENDED
   uint32_t _endedRowCount;

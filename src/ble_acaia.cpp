@@ -1,5 +1,6 @@
 #include "ble_acaia.h"
 #include "config.h"
+#include <cmath>
 #include <string.h>
 
 BleAcaia *BleAcaia::_instance = nullptr;
@@ -275,9 +276,9 @@ void BleAcaia::_sendHeartbeat() {
 
 float BleAcaia::_decodeWeight(const uint8_t *data, size_t len) {
   if (len < 6)
-    return -1.0f;
+    return NAN;
   if (data[0] != 0xEF || data[1] != 0xDD)
-    return -1.0f;
+    return NAN;
 
   // New Acaia protocol (Pearl S, newer Lunar, Pyxis): 13 or 17-byte packet,
   // byte[4] == 0x05 signals a weight event.
@@ -291,7 +292,7 @@ float BleAcaia::_decodeWeight(const uint8_t *data, size_t len) {
     return negative ? -weight : weight;
   }
 
-  return -1.0f;
+  return NAN;
 }
 
 // ── Static notification trampoline
@@ -303,7 +304,7 @@ void BleAcaia::_notifyCallback(NimBLERemoteCharacteristic * /*ch*/,
     return;
 
   float weight = _decodeWeight(data, len);
-  if (weight < 0.0f)
+  if (std::isnan(weight))
     return;
 
   _instance->_lastNotify = millis();

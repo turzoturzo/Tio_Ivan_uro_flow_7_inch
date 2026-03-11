@@ -41,6 +41,12 @@ static void (*on_end_clicked)() = nullptr;
 
 static char s_boot_wifi[64] = "MONGOFLO-LAB-5G";
 
+// Manual mode state
+static bool s_manual_mode = false;
+static void (*on_manual_mode_toggled)(bool) = nullptr;
+static lv_obj_t *boot_manual_value = nullptr;
+static lv_obj_t *ready_sub_label = nullptr;
+
 static void clear_refs() {
   status_label = nullptr;
   boot_title_label = nullptr;
@@ -59,6 +65,8 @@ static void clear_refs() {
 
   success_count_label = nullptr;
   success_bar = nullptr;
+  boot_manual_value = nullptr;
+  ready_sub_label = nullptr;
 }
 
 // Animation callback for indeterminate boot progress bar
@@ -116,6 +124,17 @@ static void event_handler(lv_event_t *e) {
     on_start_clicked();
   } else if (on_end_clicked && lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_3)) {
     on_end_clicked();
+  } else if (lv_obj_has_flag(obj, LV_OBJ_FLAG_USER_4)) {
+    // Manual mode toggle
+    s_manual_mode = !s_manual_mode;
+    if (boot_manual_value) {
+      lv_label_set_text(boot_manual_value, s_manual_mode ? "ON" : "OFF");
+      lv_obj_set_style_text_color(boot_manual_value,
+          lv_color_hex(s_manual_mode ? UI_COLOR_GREEN : UI_COLOR_WHITE), 0);
+    }
+    if (on_manual_mode_toggled) {
+      on_manual_mode_toggled(s_manual_mode);
+    }
   }
 }
 
@@ -212,6 +231,16 @@ void ui_set_state(UIState state) {
                                                "Begin New Measurement",
                                                LV_SYMBOL_PLAY, nullptr);
     lv_obj_add_flag(export_card, LV_OBJ_FLAG_USER_2);
+
+    lv_obj_t *manual_card = create_metric_card(main_screen, 20, 360,
+                                                "MANUAL MODE",
+                                                s_manual_mode ? "ON" : "OFF",
+                                                LV_SYMBOL_SETTINGS, &boot_manual_value);
+    lv_obj_add_flag(manual_card, LV_OBJ_FLAG_USER_4);
+    if (boot_manual_value) {
+      lv_obj_set_style_text_color(boot_manual_value,
+          lv_color_hex(s_manual_mode ? UI_COLOR_GREEN : UI_COLOR_WHITE), 0);
+    }
 
     lv_obj_t *countdown = lv_obj_create(main_screen);
     lv_obj_set_size(countdown, 390, 320);
@@ -329,16 +358,21 @@ void ui_set_state(UIState state) {
     lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(status_label, LV_ALIGN_CENTER, 0, -20);
 
-    lv_obj_t *sub = lv_label_create(main_screen);
-    lv_label_set_text(sub,
-                      "Add weight to the scale\nto begin measurement automatically");
-    lv_obj_set_style_text_font(sub, &lv_font_montserrat_32, 0);
-    lv_obj_set_style_text_color(sub, lv_color_hex(0x13351F), 0);
-    lv_obj_set_style_text_align(sub, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(sub, LV_ALIGN_CENTER, 0, 48);
+    ready_sub_label = lv_label_create(main_screen);
+    if (s_manual_mode) {
+      lv_label_set_text(ready_sub_label,
+                        "Manual Mode Active\nTap anywhere to begin measurement");
+    } else {
+      lv_label_set_text(ready_sub_label,
+                        "Add weight to the scale\nto begin measurement automatically");
+    }
+    lv_obj_set_style_text_font(ready_sub_label, &lv_font_montserrat_32, 0);
+    lv_obj_set_style_text_color(ready_sub_label, lv_color_hex(0x13351F), 0);
+    lv_obj_set_style_text_align(ready_sub_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(ready_sub_label, LV_ALIGN_CENTER, 0, 48);
 
     lv_obj_t *tap = lv_label_create(main_screen);
-    lv_label_set_text(tap, "Tap anywhere to begin manually");
+    lv_label_set_text(tap, s_manual_mode ? "Auto-start disabled" : "Tap anywhere to begin manually");
     lv_obj_set_style_text_font(tap, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(tap, lv_color_hex(0x1D4E2D), 0);
     lv_obj_align(tap, LV_ALIGN_BOTTOM_MID, 0, -62);
@@ -712,4 +746,16 @@ void ui_set_sync_status(const char *message, bool is_error) {
 void ui_set_home_cb(void (*cb)()) { on_home_clicked = cb; }
 void ui_set_start_cb(void (*cb)()) { on_start_clicked = cb; }
 void ui_set_end_cb(void (*cb)()) { on_end_clicked = cb; }
+void ui_set_manual_mode_cb(void (*cb)(bool on)) { on_manual_mode_toggled = cb; }
 UIState ui_get_state() { return current_ui_state; }
+
+void ui_set_manual_mode(bool on) {
+  s_manual_mode = on;
+  if (boot_manual_value) {
+    lv_label_set_text(boot_manual_value, on ? "ON" : "OFF");
+    lv_obj_set_style_text_color(boot_manual_value,
+        lv_color_hex(on ? UI_COLOR_GREEN : UI_COLOR_WHITE), 0);
+  }
+}
+
+bool ui_get_manual_mode() { return s_manual_mode; }

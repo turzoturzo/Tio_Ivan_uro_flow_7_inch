@@ -8,10 +8,12 @@
 
 Session::Session()
     : _state(State::IDLE), _sessionStartMs(0), _sessionStartEpoch(0),
-      _lastWeightMs(0), _lastWeight(0.0f), _lastRelativeWeight(0.0f),
+      _lastWeightMs(0), _lastWeight(0.0f), _preTareWeight(0.0f),
+      _lastRelativeWeight(0.0f),
       _prevRawWeight(0.0f), _cumulativeWeight(0.0f), _sessionTareWeight(0.0f),
       _rowCount(0), _hasRealTime(false), _seqNum(0), _lastFlushMs(0),
       _weightBelowThresholdMs(0), _hasExceededStartThreshold(false),
+      _manualMode(false),
       _endedRowCount(0), _endedDurationMs(0),
       _lastFlowRate(0.0f), _qMax(0.0f), _tQmaxMs(0),
       _flowRateHistIdx(0), _prevFlowCalcMs(0), _prevCumulativeForFlow(0.0f),
@@ -71,8 +73,14 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
   if (_state == State::IDLE) {
     // Auto-start only when weight clearly exceeds the start threshold
     if (weight_g >= SESSION_START_THRESHOLD_G) {
-      _startSession();
+      if (!_manualMode) {
+        _startSession();
+      } else {
+        return; // Manual mode: suppress auto-start
+      }
     } else {
+      // Track last sub-threshold weight as tare baseline
+      _preTareWeight = weight_g;
       return;
     }
   }
@@ -81,7 +89,15 @@ void Session::_processWeight(float weight_g, uint32_t /*t_ms_abs*/) {
     return;
 
   float relativeWeight = weight_g - _sessionTareWeight;
-  if (relativeWeight < 0.0f) {
+  if (relativeWeight < -2.0f) {
+    // Significant negative weight (e.g. cup removed) — trigger end countdown
+    if (_hasExceededStartThreshold && _weightBelowThresholdMs == 0) {
+      _weightBelowThresholdMs = millis();
+      Serial.printf("[Session] Negative weight (%.1fg) — starting end countdown\n",
+                    relativeWeight);
+    }
+    relativeWeight = 0.0f;
+  } else if (relativeWeight < 0.0f) {
     relativeWeight = 0.0f;
   }
   _lastRelativeWeight = relativeWeight;
@@ -205,7 +221,7 @@ void Session::_startSession() {
   _cumulativeWeight = 0.0f;
   _prevRawWeight = 0.0f;
   _lastRelativeWeight = 0.0f;
-  _sessionTareWeight = _lastWeight;
+  _sessionTareWeight = _preTareWeight;
   _lastFlowRate = 0.0f;
   _qMax = 0.0f;
   _tQmaxMs = 0;
@@ -389,24 +405,27 @@ int Session::uploadToGoogleSheet(const String &path) {
     return 0;
   }
 
-  Serial.println("[Cloud] Connecting to WiFi...");
-  if (WiFi.getMode() != WIFI_MODE_NULL) {
-    WiFi.disconnect();
-  }
-  WiFi.mode(WIFI_STA);
-  WiFi.persistent(false);
-  WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
-
-  uint32_t deadline = millis() + 12000;
-  while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
-    delay(250);
-  }
-
+  // Reuse existing WiFi connection if already connected (batch uploads).
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Cloud] WiFi connect failed");
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    return 0; // 0 = WiFi Failed
+    Serial.println("[Cloud] Connecting to WiFi...");
+    if (WiFi.getMode() != WIFI_MODE_NULL) {
+      WiFi.disconnect();
+    }
+    WiFi.mode(WIFI_STA);
+    WiFi.persistent(false);
+    WiFi.begin(wifiSsid.c_str(), wifiPass.c_str());
+
+    uint32_t deadline = millis() + 12000;
+    while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
+      delay(250);
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("[Cloud] WiFi connect failed");
+      WiFi.disconnect(true);
+      WiFi.mode(WIFI_OFF);
+      return 0; // 0 = WiFi Failed
+    }
   }
 
   Serial.println("[Cloud] WiFi connected, opening file...");
@@ -421,27 +440,30 @@ int Session::uploadToGoogleSheet(const String &path) {
   Serial.printf("[Cloud] File: %s (%u bytes)\n", path.c_str(),
                 (unsigned int)fileSize);
 
-  // Use per-call heap clients to avoid stale TLS/HTTP state across reconnects.
   WiFiClientSecure *client = new WiFiClientSecure();
   HTTPClient *http = new HTTPClient();
   if (!client || !http) {
     Serial.println("[Cloud] ERROR: Out of memory for HTTP client");
-    if (client)
-      delete client;
-    if (http)
-      delete http;
+    if (client) delete client;
+    if (http) delete http;
     f.close();
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     return -1;
   }
-  client->setInsecure(); // No certificate validation for Google
+  client->setInsecure();
+  // NetworkClient::setTimeout() takes MILLISECONDS. Set to 60s for socket reads.
+  client->setTimeout(60000);
 
-  // Set a robust timeout (45s) — ESP32 TLS handshake with Google can be slow
-  http->setTimeout(45000);
+  // HTTPClient::setTimeout() takes uint16_t ms — max 65535!
+  // 90000 overflows to 24464 (~25s). Use 60000 (fits uint16_t).
+  http->setTimeout(60000);
+  // Don't follow redirects. Google Apps Script returns 302 after processing;
+  // following it opens a second TLS connection to googleusercontent.com which
+  // stalls on ESP32. Treat 302 as success (data was already processed).
   http->setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
 
-  // Build URL with parameters: filename and device_name
+  // Build URL with parameters
   String url = String(CLOUD_UPLOAD_URL);
   url += (url.indexOf('?') >= 0) ? "&" : "?";
   url += "filename=";
@@ -463,11 +485,37 @@ int Session::uploadToGoogleSheet(const String &path) {
     return -1;
   }
   http->addHeader("Content-Type", "text/plain");
+  http->addHeader("User-Agent", "ESP32-MongoFlo/1.4");
+  http->addHeader("Accept", "*/*");
+  http->setReuse(false);
 
-  Serial.println("[Cloud] Streaming POST request...");
-  int httpCode = http->sendRequest("POST", &f, fileSize);
+  Serial.printf("[Cloud] WiFi IP: %s\n", WiFi.localIP().toString().c_str());
+
+  // Read file into memory (bulk read, not char-by-char).
+  char *buf = (char *)malloc(fileSize + 1);
+  if (!buf) {
+    Serial.println("[Cloud] ERROR: malloc failed for file buffer");
+    f.close();
+    http->end();
+    delete http;
+    delete client;
+    return -1;
+  }
+  size_t bytesRead = f.read((uint8_t *)buf, fileSize);
   f.close();
+  buf[bytesRead] = '\0';
+  String body;
+  body.reserve(bytesRead + 1);
+  body = buf;
+  free(buf);
 
+  Serial.printf("[Cloud] POST %u bytes...\n", body.length());
+  uint32_t postStart = millis();
+  int httpCode = http->POST(body);
+  Serial.printf("[Cloud] POST returned in %lu ms, code: %d\n",
+                (unsigned long)(millis() - postStart), httpCode);
+
+  // 302 = Google processed the data and is redirecting to result page.
   bool success = (httpCode == 200 || httpCode == 302);
 
   if (success) {
@@ -477,14 +525,17 @@ int Session::uploadToGoogleSheet(const String &path) {
     if (httpCode < 0) {
       Serial.printf("[Cloud] Error: %s\n",
                     http->errorToString(httpCode).c_str());
+    } else {
+      String resp = http->getString();
+      if (resp.length() > 0) {
+        Serial.printf("[Cloud] Response: %.200s\n", resp.c_str());
+      }
     }
   }
 
   http->end();
   delete http;
   delete client;
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-
+  // Don't disconnect WiFi here — caller manages WiFi lifecycle for batch uploads.
   return success ? 1 : httpCode;
 }

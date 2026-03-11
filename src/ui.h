@@ -35,3 +35,8 @@ void ui_set_start_cb(void (*cb)());
 void ui_set_end_cb(void (*cb)());
 void ui_set_wifi_submit_cb(void (*cb)(const char *ssid, const char *pass));
 void ui_set_wifi_modal_status(const char *message, bool is_error);
+
+// Manual mode (suppresses auto-start on weight detection)
+void ui_set_manual_mode_cb(void (*cb)(bool on));
+void ui_set_manual_mode(bool on);
+bool ui_get_manual_mode();

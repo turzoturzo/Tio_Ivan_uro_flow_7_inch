@@ -306,6 +306,14 @@ static void processPendingUploads(bool updateUi) {
     } else {
       keep[keepCount++] = path;
       Serial.printf("[Cloud] Keep pending (rc=%d): %s\n", rc, path.c_str());
+      if (rc == 0) {
+        // WiFi failed — no point retrying remaining files this cycle
+        Serial.println("[Cloud] WiFi failed, deferring remaining uploads");
+        for (int j = i + 1; j < count && keepCount < 64; ++j) {
+          keep[keepCount++] = items[j];
+        }
+        break;
+      }
     }
     // Only attempt ONE upload per boot — keep BLE connection fast.
     // Preserve remaining files for next boot.
@@ -315,6 +323,10 @@ static void processPendingUploads(bool updateUi) {
     break;
   }
   writeSyncQueue(keep, keepCount);
+
+  // Tear down WiFi after uploads are done.
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
 
   // Resume BLE scanning immediately so loop() doesn't have to wait.
   gBle.tick();
@@ -1030,6 +1042,12 @@ static void onUiEnd() {
   }
 }
 
+static void onUiManualMode(bool on) {
+  gSession.setManualMode(on);
+  ui_set_manual_mode(on);
+  Serial.printf("[UI] Manual mode %s\n", on ? "ON" : "OFF");
+}
+
 // ── setup()
 // ───────────────────────────────────────────────────────────────────
 
@@ -1050,6 +1068,7 @@ void setup() {
   ui_set_home_cb(onUiHome);
   ui_set_start_cb(onUiStart);
   ui_set_end_cb(onUiEnd);
+  ui_set_manual_mode_cb(onUiManualMode);
   lv_timer_handler(); // Force an initial render pass
 
   // ── Initialise touch controller early (handled by Display::begin()) ──
@@ -1213,14 +1232,35 @@ void loop() {
   }
 
   // Handle upload pipeline exactly once per ended session:
-  // queue locally and defer sync to next boot so UI remains responsive.
+  // queue locally, then attempt immediate upload before user navigates away.
   if (gSession.state() == Session::State::ENDED && !endHandled) {
     String saved = gSession.lastSavedName();
     if (saved.length() > 0) {
       enqueuePendingUpload(saved);
       String wifiSsid, wifiPass;
       if (loadWifiCreds(wifiSsid, wifiPass)) {
-        ui_set_sync_status("Data saved\nCloud sync on next boot", false);
+        ui_set_sync_status("Uploading to cloud...", false);
+        lv_timer_handler(); // flush UI update
+        gBle.pauseForWifi();
+        int rc = gSession.uploadToGoogleSheet(saved);
+        if (rc == 1) {
+          // Remove from queue on success
+          static String remaining[64];
+          int cnt = readSyncQueue(remaining, 64);
+          int keep = 0;
+          for (int i = 0; i < cnt; i++) {
+            if (remaining[i] != saved) remaining[keep++] = remaining[i];
+          }
+          writeSyncQueue(remaining, keep);
+          ui_set_sync_status("Data saved & synced to cloud", false);
+          Serial.printf("[Cloud] Immediate upload OK: %s\n", saved.c_str());
+        } else {
+          ui_set_sync_status("Data saved\nCloud sync on next boot", false);
+          Serial.printf("[Cloud] Immediate upload failed (rc=%d), queued for retry\n", rc);
+        }
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        gBle.tick(); // resume BLE
       } else {
         ui_set_sync_status("Data saved locally\nConfigure WiFi to enable sync", false);
       }
